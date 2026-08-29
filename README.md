@@ -117,7 +117,7 @@ The CLI flags are in French (see [Known limitations](#known-limitations)); here 
 - **Clipped highlights cannot be reconstructed** — exposure is re-leveled, but detail lost to saturation stays lost.
 - **Two color renditions can coexist in one film** if a solar filter was removed mid-sequence. That is what really happened in front of the camera, so it is kept, like cloud crossings.
 - The viewer's **Browse…** dialog needs a graphical session (it uses the system file dialog via `tkinter`). On a headless machine, pass the video path on the command line instead.
-- The test suite is developed on **Windows**; three Windows-specific tests skip themselves automatically on Linux/macOS.
+- The test suite is developed on **Windows**; four Windows-specific tests skip themselves automatically on Linux/macOS.
 
 ## Tests
 

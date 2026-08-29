@@ -114,7 +114,7 @@ eclipse-cleaner render entree.mp4 sortie.mp4 --cache analysis.json --blur-rel 0.
 - **Les hautes lumières écrêtées ne se reconstruisent pas** — le niveau est rétabli, mais le détail perdu dans la saturation reste perdu.
 - **Deux rendus colorimétriques peuvent cohabiter dans un même film** si un filtre solaire a été retiré en cours de séquence. C'est ce qui s'est réellement passé devant la caméra, donc c'est conservé, au même titre que les traversées nuageuses.
 - Le bouton **Parcourir…** du viewer a besoin d'une session graphique (il utilise la boîte de dialogue du système via `tkinter`). Sur une machine sans affichage, passez le chemin de la vidéo en argument.
-- La suite de tests est développée sous **Windows** ; trois tests propres à Windows se sautent automatiquement sous Linux/macOS.
+- La suite de tests est développée sous **Windows** ; quatre tests propres à Windows se sautent automatiquement sous Linux/macOS.
 
 ## Tests
 

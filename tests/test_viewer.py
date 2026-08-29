@@ -848,10 +848,32 @@ def test_rendu_refuse_un_dossier_png_non_vide(serveur_avec_moteur):
     assert code == 202
 
 
-def test_rendu_annule_ne_laisse_pas_de_fichier_de_sortie(serveur_avec_moteur):
+def _ralentit_progression(moteur, monkeypatch, pas=0.05):
+    """Rend l'annulation en cours de rendu deterministe, toute plateforme.
+
+    Sur une machine rapide (les executeurs Linux de la CI), le rendu de la
+    petite video de fixture se terminait AVANT l'arrivee du DELETE : le test
+    constatait 'terminee' au lieu d''annulee'. Le rappel de progression est
+    le point d'annulation du moteur ; le ralentir garantit que la tache est
+    encore en vol au moment de l'annulation, sans dependre de la vitesse de
+    la machine. A poser AVANT le POST : _prepare capture moteur.progression
+    au lancement de la tache.
+    """
+    reel = moteur.progression
+
+    def lente(fait, total=None):
+        time.sleep(pas)
+        return reel(fait, total)
+
+    monkeypatch.setattr(moteur, "progression", lente)
+
+
+def test_rendu_annule_ne_laisse_pas_de_fichier_de_sortie(
+        serveur_avec_moteur, monkeypatch):
     """Un mp4 tronque laisse en place serait pris pour un rendu valide."""
     url, moteur, src = serveur_avec_moteur
     sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    _ralentit_progression(moteur, monkeypatch)
     code, _ = _post(f"{url}/api/tache", {"genre": "rendu"})
     assert code == 202
     # Laisser le rendu demarrer pour de vrai avant d'annuler, sinon le test
@@ -1040,7 +1062,7 @@ def test_reexport_png_plus_court_ne_laisse_pas_de_png_du_precedent(
 # fichier precedent n'est touche qu'une fois le nouveau complet.
 
 def test_rendu_annule_avec_ecraser_laisse_le_precedent_intact(
-        serveur_avec_moteur):
+        serveur_avec_moteur, monkeypatch):
     """La propriete que ni le nettoyage en bloc ni l'empreinte ne donnaient.
 
     ffmpeg ouvre sa sortie avec -y et la tronque des le demarrage. Tant que
@@ -1057,6 +1079,7 @@ def test_rendu_annule_avec_ecraser_laisse_le_precedent_intact(
     with open(sortie, "wb") as f:
         f.write(contenu)
 
+    _ralentit_progression(moteur, monkeypatch)
     code, _ = _post(f"{url}/api/tache", {"genre": "rendu", "ecraser": True})
     assert code == 202
     # Attendre que le rendu ecrive pour de vrai : sinon le test verifierait
@@ -1104,7 +1127,7 @@ def test_rendu_refuse_pour_occupation_ne_touche_pas_l_export_png(
 
 
 def test_reexport_png_annule_laisse_l_export_precedent_intact(
-        serveur_avec_moteur):
+        serveur_avec_moteur, monkeypatch):
     """Symetrique du test ci-dessus, cote sequence PNG.
 
     ffmpeg ecrit les PNG au fur et a mesure dans le dossier qu'on lui donne.
@@ -1120,6 +1143,7 @@ def test_reexport_png_annule_laisse_l_export_precedent_intact(
     with open(temoin, "wb") as f:
         f.write(b"export precedent")
 
+    _ralentit_progression(moteur, monkeypatch)
     code, _ = _post(f"{url}/api/tache",
                     {"genre": "rendu", "png": True, "ecraser": True})
     assert code == 202
@@ -1406,6 +1430,9 @@ def test_rendu_partiel_vide_n_est_pas_livre(tmp_path, monkeypatch):
 # -- Revue finale, point D : une permutation ratee laissait un rendu complet
 # sans dire ou. Le message du moteur ne nommait que l'exception.
 
+@pytest.mark.skipif(os.name != "nt",
+                    reason="compte sur chmod S_IREAD pour faire echouer "
+                           "os.replace, ce que POSIX ne fait pas")
 def test_echec_de_permutation_nomme_les_artefacts_de_recuperation(
         tmp_path, monkeypatch):
     """Sans le nom du -partiel, le lancement suivant le detruit en silence.
