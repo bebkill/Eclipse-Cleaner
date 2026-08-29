@@ -1,0 +1,36 @@
+[project]
+name = "eclipse-cleaner"
+version = "1.0.0"
+description = "Clean up and stabilize a shaky solar-eclipse timelapse: drop broken frames, lock the solar disk to the center, normalize exposure"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "bebkill" }]
+requires-python = ">=3.12"
+dependencies = ["numpy>=2.0", "imageio-ffmpeg>=0.5"]
+keywords = ["eclipse", "astronomy", "timelapse", "stabilization", "video", "smart-telescope"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+[project.urls]
+Homepage = "https://github.com/bebkill/Eclipse-Cleaner"
+Issues = "https://github.com/bebkill/Eclipse-Cleaner/issues"
+
+[project.scripts]
+eclipse-cleaner = "eclipse.pipeline:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["eclipse*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

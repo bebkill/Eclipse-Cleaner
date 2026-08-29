@@ -1,0 +1,85 @@
+"""Verdicts automatiques et trajectoire de recadrage.
+
+Extrait de render() pour que le viewer et le rendu suivent exactement le
+meme chemin : ce que l'utilisateur voit en rouge dans le viewer doit etre
+ce que le rendu ecarte. Deux implementations divergeraient tot ou tard.
+"""
+import numpy as np
+
+from .quality import (SEUILS_DEFAUT, classify, supprime_ilots,
+                      verdicts_hors_source)
+from .track import smooth_track
+
+
+def _colonne(frames, cle, defaut=np.nan):
+    return np.array([defaut if f[cle] is None else f[cle] for f in frames],
+                    dtype=np.float64)
+
+
+def analyse_verdicts(donnees, src_w, src_h, seuils=None,
+                     tolerance_bord=None, seuil_masque=None):
+    """Verdicts automatiques et trajectoire de fenetre, frame par frame.
+
+    donnees : le cache d'analyse. src_w, src_h : dimensions de la SOURCE.
+    Les valeurs None prennent les defauts du module pipeline.
+    """
+    from .pipeline import MARGE_HALO, SEUIL_MASQUE_DEFAUT, TOLERANCE_BORD_DEFAUT
+
+    tolerance_bord = (TOLERANCE_BORD_DEFAUT if tolerance_bord is None
+                      else float(tolerance_bord))
+    seuil_masque = (SEUIL_MASQUE_DEFAUT if seuil_masque is None
+                    else float(seuil_masque))
+
+    frames = donnees["frames"]
+    conf = _colonne(frames, "conf", 0.0)
+    verdicts = classify(_colonne(frames, "disk_p90", 0.0),
+                        _colonne(frames, "limb_sharpness", 0.0),
+                        _colonne(frames, "flare_ratio", 1e9),
+                        conf, seuils,
+                        level=_colonne(frames, "level", 0.0))
+
+    cx = _colonne(frames, "cx")
+    cy = _colonne(frames, "cy")
+    # La validite d'une mesure ne depend PAS du verdict de tri. Une frame
+    # rejetee pour flou garde sa position juste, et la retrouve si
+    # l'utilisateur la recupere dans le viewer — c'est ce qui corrige les 37
+    # frames que le rendu cadrait jusqu'a 1109 px a cote, parce que la
+    # decision humaine arrivait apres le calcul de la trajectoire.
+    # Ce qui decide, c'est la coherence entre le centre et l'image : le masque
+    # solaire capture-t-il la lumiere ? (voir quality.masse_captee)
+    capt = _colonne(frames, "masse_captee", 0.0)
+    mesure_ok = np.isfinite(cx) & (capt >= seuil_masque)
+    scx, scy = smooth_track(cx, cy, mesure_ok)
+
+    # kx/ky convertissent les coordonnees d'analyse en coordonnees SOURCE
+    # pleine resolution — jamais en coordonnees de sortie, qui ne sont plus
+    # les memes depuis le cadre resserre. Rapport exact des dimensions, et
+    # non 1/scale, car les tailles d'analyse sont arrondies au pixel pair.
+    kx = src_w / donnees["width"]
+    ky = src_h / donnees["height"]
+
+    # Le critere de bord s'applique a la trajectoire APRES interpolation
+    # (scx, scy sont deja la sortie de smooth_track) : une frame interpolee
+    # peut amputer le disque tout comme une frame mesuree. On fusionne avec
+    # les verdicts de classify() puis on relance le nettoyage d'ilots, qui
+    # peut reveler de nouvelles plages trop courtes que classify() ne
+    # pouvait pas voir sans connaitre ces rejets.
+    rayon_visible = donnees["radius"] * kx + MARGE_HALO
+    hors = verdicts_hors_source(scx * kx, scy * ky, rayon_visible,
+                                src_w, src_h, tolerance_bord)
+
+    # Le clip de fenetre et le sort des frames trop decentrees n'habitent
+    # plus ici : la trajectoire de fenetre est PLANIFIEE dans render, apres
+    # l'application des decisions, par track.planifie_trajectoire — le
+    # corridor du planificateur depend des frames reellement gardees. Le
+    # verdict decentre a ete supprime avec la butee dure : la revue humaine
+    # a montre que son amplitude ne predisait pas le jugement de l'oeil
+    # (medianes identiques, 76,9 px, des deux cotes du choix), et le
+    # planificateur borne les sauts par construction.
+    ilot_min = (dict(SEUILS_DEFAUT) if seuils is None
+                else dict(SEUILS_DEFAUT, **seuils))["ilot_min"]
+    verdicts = supprime_ilots(
+        [h or v for v, h in zip(verdicts, hors)], ilot_min)
+
+    return {"verdicts": verdicts, "traj_x": scx * kx, "traj_y": scy * ky,
+            "kx": kx, "ky": ky}

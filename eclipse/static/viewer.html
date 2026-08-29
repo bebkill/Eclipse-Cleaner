@@ -1,0 +1,2509 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<title>Revue des frames</title>
+<style>
+  /* ------------------------------------------------------------------
+     PALETTES. Deux themes complets. Le theme clair est la BASE, pose sur
+     :root nu : aucune couleur n'a sa seule definition dans une media
+     query, donc aucun jeton ne peut manquer si la requete ne s'applique
+     pas. Le theme sombre est ecrit deux fois, exactement pareil :
+       - sous @media (prefers-color-scheme: dark), garde par
+         :not([data-theme="light"]) pour qu'un choix explicite « clair »
+         gagne contre le systeme ;
+       - sous :root[data-theme="dark"], qui vient plus tard et plus
+         specifique, pour qu'un choix explicite « sombre » gagne contre un
+         systeme clair.
+     C'est la duplication qui fait que la bascule gagne DANS LES DEUX SENS.
+     ------------------------------------------------------------------ */
+  :root, :root[data-theme="light"] {
+    /* light dark, et non dark : les widgets natifs (case a cocher, barre
+       de progression, ascenseur) doivent suivre le theme comme le reste. */
+    color-scheme: light dark;
+
+    /* -- surfaces -- */
+    --fond: #f2f4f7;
+    --panneau: #ffffff;
+    --scene: #e4e8ee;          /* la scene de la pellicule, sous les photos */
+    --bord: #d3d8e0;
+    --bord-fort: #b9c0cb;      /* bord qui doit se voir (touches, contours) */
+    --survol: #e9edf3;
+    --enfonce: #dde3ec;
+    --ombre: rgba(16, 24, 40, 0.10);
+
+    /* -- texte -- */
+    --texte: #171a1f;
+    --texte-faible: #5b626d;
+
+    /* -- action -- */
+    --accent: #2454bd;
+    --accent-fonce: #1d47a3;
+    --sur-accent: #ffffff;     /* texte pose sur un aplat accent ou rejet-vif */
+
+    /* -- etats de frame. Rouge / vert / bleu portent du SENS (ecartee,
+       retenue, modifiee par l'utilisateur) : ils ne sont pas decoratifs et
+       gardent le meme role dans les deux themes.
+       Trois roles distincts par couleur, parce qu'un seul ton ne peut pas
+       les tenir tous : un aplat doux (fond de vignette), un aplat fort /
+       trait (bordure, timeline, bandeau d'erreur) et, pour le rouge, un ton
+       lisible EN TEXTE sur --panneau — le rouge fort sert d'aplat sous du
+       blanc, il ne peut pas servir de texte. Le vert fort, lui, n'a pas
+       d'emploi en aplat : --garde-vif est directement le vert de texte. -- */
+    --garde: #1c7a3e;          /* aplat + bordure « retenue » */
+    --garde-vif: #15703a;      /* texte « Conservee » sur --panneau */
+    --rejet: #f6dedb;          /* fond doux d'une vignette ecartee */
+    --rejet-vif: #b3261e;      /* bordure, timeline, fond du bandeau d'erreur */
+    --rejet-texte: #a52016;    /* texte « Ecartee » sur --panneau */
+    --modif: #dce8fb;          /* aplat doux bleu (reserve, cf. .modifiee) */
+    --modif-vif: #1c62c9;      /* bordure + timeline « modifiee par moi » */
+    /* QUATRIEME role, et quatrieme teinte : l'ecart avec le rendu deja
+       produit. Il ne remplace pas l'etat de la frame -- il s'y AJOUTE, en
+       lisere au-dessus de la barre --, donc ses voisins sont precisement le
+       vert, le rouge et le bleu, et il doit tenir 3:1 contre les trois
+       (contraste non textuel, WCAG 1.4.11). Ici : 3,56 / 4,32 / 3,82.
+       Les trois etats sont sombres dans ce theme (0,11 a 0,15 de luminance
+       relative) : un lisere CLAIR y passe, et l'or est le seul assez clair
+       pour tenir les 3:1 tout en restant une teinte franche, differente des
+       trois. Pas de contrainte contre --piste (1,51:1) : la barre couvre
+       toute la largeur, le lisere ne touche jamais le fond du canvas. */
+    --ecart: #ffcc00;
+
+    /* -- image et timeline. Ces jetons-la se posent sur des photos, pas sur
+       le fond de la page : ils ne changent pas avec le theme. -- */
+    --fond-image: #000000;
+    --voile: rgba(0, 0, 0, 0.7);       /* bandeau de legende sur la vignette */
+    --voile-fort: rgba(0, 0, 0, 0.78);
+    --sur-image: #ffffff;
+    --motif: #ffb3b3;
+    --piste: #ffffff;          /* fond du canvas, visible si rien n'est peint */
+    --curseur: #ffffff;        /* tete de lecture, posee sur vert/rouge/bleu */
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fond: #14161a;
+      --panneau: #1d2025;
+      --scene: #0d0f12;
+      --bord: #2c3038;
+      --bord-fort: #3a4049;
+      --survol: #262a31;
+      --enfonce: #2c3038;
+      --ombre: rgba(0, 0, 0, 0.5);
+      --texte: #e8e8e8;
+      --texte-faible: #9a9fa8;
+      --accent: #3a6fd8;
+      --accent-fonce: #2f5cb8;
+      --sur-accent: #ffffff;
+      --garde: #2f7d46;
+      --garde-vif: #7bd88f;
+      --rejet: #7a1f1f;
+      --rejet-vif: #c23a3a;
+      --rejet-texte: #ff8686;
+      --modif: #1f3f78;
+      --modif-vif: #4d8fe6;
+      /* Plus pale qu'en clair, et ce n'est pas un choix de gout : --modif-vif
+         monte ici a 0,27 de luminance relative, ce qui impose au moins 0,91
+         au lisere pour tenir 3:1 contre lui -- et un lisere SOMBRE est exclu
+         par --rejet-vif dans l'autre sens. Aucune teinte saturee n'atteint
+         0,91 ; le jaune pale est la plus franche qui y arrive.
+         4,80 / 5,02 / 3,11. Il frole le blanc du curseur (1,06:1), mais
+         celui-ci traverse toute la hauteur du canvas et ne se confond donc
+         pas avec une bande de 6 px. */
+      --ecart: #ffff80;
+      --fond-image: #000000;
+      --voile: rgba(0, 0, 0, 0.7);
+      --voile-fort: rgba(0, 0, 0, 0.78);
+      --sur-image: #ffffff;
+      --motif: #ffb3b3;
+      --piste: #0b0c0e;
+      --curseur: #ffffff;
+    }
+  }
+
+  /* Meme palette sombre, en choix explicite : plus specifique que :root nu,
+     donc elle gagne meme si le systeme est en clair. */
+  :root[data-theme="dark"] {
+    --fond: #14161a;
+    --panneau: #1d2025;
+    --scene: #0d0f12;
+    --bord: #2c3038;
+    --bord-fort: #3a4049;
+    --survol: #262a31;
+    --enfonce: #2c3038;
+    --ombre: rgba(0, 0, 0, 0.5);
+    --texte: #e8e8e8;
+    --texte-faible: #9a9fa8;
+    --accent: #3a6fd8;
+    --accent-fonce: #2f5cb8;
+    --sur-accent: #ffffff;
+    --garde: #2f7d46;
+    --garde-vif: #7bd88f;
+    --rejet: #7a1f1f;
+    --rejet-vif: #c23a3a;
+    --rejet-texte: #ff8686;
+    --modif: #1f3f78;
+    --modif-vif: #4d8fe6;
+    --ecart: #ffff80;
+    --fond-image: #000000;
+    --voile: rgba(0, 0, 0, 0.7);
+    --voile-fort: rgba(0, 0, 0, 0.78);
+    --sur-image: #ffffff;
+    --motif: #ffb3b3;
+    --piste: #0b0c0e;
+    --curseur: #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+
+  /* ------------------------------------------------------------------
+     LA COQUILLE. La page tient dans la fenetre, sans defilement : ce
+     n'est pas une affaire de tailles reglees pour un ecran, c'est une
+     propriete de la mise en page. Une grille de la hauteur de la fenetre,
+     un rail de largeur fixe a gauche, une colonne qui prend le reste ; et
+     dans cette colonne, la pellicule prend la hauteur qui reste une fois
+     que la timeline et le transport ont pris la leur.
+     Consequence assumee : c'est L'IMAGE qui recoit tout le rab, et le
+     script dimensionne la vignette d'apres cette hauteur-la (voir
+     dessineBandeau) et non l'inverse. Une hauteur de vignette fixe, comme
+     avant, imposait sa loi a la page et la faisait deborder.
+     ------------------------------------------------------------------ */
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--fond); color: var(--texte);
+    font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui,
+          -apple-system, sans-serif;
+    overflow: hidden;
+  }
+  body {
+    display: grid; grid-template-columns: 268px minmax(0, 1fr);
+    height: 100vh;
+  }
+  /* Fenetre etroite : le rail cede de la largeur avant l'image. */
+  @media (max-width: 900px) {
+    body { grid-template-columns: 212px minmax(0, 1fr); }
+  }
+
+  /* ------------------------------------------------------------------
+     LE RAIL : tout ce qui PILOTE. Les trois etapes empilees dans l'ordre,
+     l'option de l'etape 3, les filtres de revue, puis, pousses en bas, la
+     documentation et le theme. Rien de ce qui est ici ne parle de la
+     frame courante — ca, c'est le role de la colonne.
+     ------------------------------------------------------------------ */
+  #rail {
+    display: flex; flex-direction: column; gap: 16px;
+    padding: 14px; min-height: 0; overflow-y: auto;
+    background: var(--panneau); border-right: 1px solid var(--bord);
+  }
+  h1 {
+    font-size: 17px; font-weight: 650; margin: 0;
+    letter-spacing: -0.01em; color: var(--texte);
+  }
+  h2 {
+    font-size: 10.5px; font-weight: 700; margin: 0 0 8px;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--texte-faible);
+  }
+  /* Pousse l'aide et le theme au bas du rail : ils ne se disputent pas la
+     place avec les commandes, ils prennent ce qui reste. */
+  #pied-rail { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+
+  /* La version : une reference, pas de la prose. Elle doit etre lisible
+     quand on la cherche et invisible quand on ne la cherche pas — d'ou
+     --texte-faible, qui tient 6,1:1 sur --panneau dans les deux themes,
+     bien au-dela du seuil de 4,5:1 du petit texte.
+     nowrap + ellipse : « 0.4.0 (19bfc48+modifie) » fait 21 caracteres et
+     le rail tombe a 212 px sous la media query ; sans cette regle elle
+     passerait a la ligne et pousserait le pied du rail.
+     Pas de margin-top : le gap de #pied-rail s'en charge. */
+  #version {
+    font-size: 11px; color: var(--texte-faible); text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* -- boutons, forme commune -- */
+  button {
+    background: var(--panneau); color: var(--texte);
+    border: 1px solid var(--bord); border-radius: 8px;
+    padding: 6px 12px; font-size: 13px; font-family: inherit;
+    cursor: pointer;
+  }
+  button:hover { background: var(--survol); }
+  button:active { background: var(--enfonce); }
+  button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  #theme {
+    background: var(--fond); color: var(--texte-faible);
+    text-align: left; font-size: 12px;
+  }
+  #theme:hover { color: var(--texte); }
+
+  /* -- les trois etapes, empilees -- */
+  #actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  /* Aucune declaration de display sur les boutons ni sur le label : ils
+     portent l'attribut [hidden] tant que /api/frames n'a pas repondu, et
+     une regle display ici gagnerait contre la regle [hidden] du navigateur
+     — ils s'afficheraient tous, avec le mauvais libelle. Le
+     dimensionnement passe donc par flex, qui ne cree pas de boite. */
+  #actions button {
+    text-align: left; line-height: 1.25;
+    padding: 11px 13px; border-radius: 10px;
+    font-size: 14px; font-weight: 600;
+    background: var(--accent); color: var(--sur-accent);
+    border: 1px solid transparent; box-shadow: 0 1px 2px var(--ombre);
+  }
+  /* Le numero d'etape est DANS le libelle (« 1. Extraire les images »,
+     pose par regleEtape cote script) : le grossir ici suffit a le faire
+     lire comme un rang, sans balise supplementaire. Simple bonus visuel —
+     si ::first-letter ne s'applique pas, le libelle reste entier. */
+  #actions button::first-letter { font-size: 19px; font-weight: 800; }
+  #actions button:hover, #actions button:active { background: var(--accent-fonce); }
+  /* -- LES CINQ ETATS D'UNE ETAPE --
+     « disponible » est la forme de base ci-dessus : l'aplat accent, le seul
+     appel a l'action de la page. Les quatre autres s'en ecartent, et chacun
+     le dit EN TOUTES LETTRES dans un ::after — la couleur ne porte jamais
+     seule une distinction. L'ordre de ces blocs compte : ils pesent tous
+     (1,1,1), c'est donc la cascade qui tranche. Ne pas les intervertir.
+
+     « Deja fait » et « a refaire » : l'etape a deja tourne, le bouton ne
+     doit pas appeler a l'action comme celui d'une etape jamais lancee. Meme
+     place, meme taille, mais en retrait. --texte sur --fond tient 15,8:1
+     (clair) et 14,8:1 (sombre) ; le ::after, a --texte-faible, 5,6:1 et
+     6,8:1. */
+  #actions button.faite, #actions button.a-refaire {
+    background: var(--fond); color: var(--texte);
+    border-color: var(--bord-fort); box-shadow: none;
+  }
+  #actions button.faite:hover, #actions button.a-refaire:hover {
+    background: var(--survol);
+  }
+  /* LA HAUTEUR DU BOUTON NE DOIT PAS DEPENDRE DE LA LONGUEUR DU LIBELLE
+     D'ETAT. Sans cette regle, elle en depend : le budget de texte vaut
+     212 px avec le rail a 268 px, mais 156 px seulement sous la media query
+     a 900 px (rail 212 px, moins 2 x 14 px de padding de rail, 2 x 12 px de
+     padding de bouton et 2 x 2 px de bordure). Une formule un peu longue
+     passait donc a la ligne sur fenetre etroite et pas sur fenetre large,
+     et le bouton changeait de hauteur d'un etat a l'autre.
+     Ici l'invariant ne repose plus sur la mesure d'une chaine : une ligne,
+     toujours, et une ellipse si un futur libelle deborde. Pose sur
+     #actions button::after et non sur chaque etat : (1,0,1), donc sans
+     conflit avec les regles d'etat qui suivent, et sans `content`, donc
+     sans effet sur les etats qui n'ont pas de ::after. */
+  #actions button::after {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #actions button.faite::after, #actions button.a-refaire::after {
+    content: attr(data-libelle-etat); display: block; margin-top: 2px;
+    font-size: 10.5px; font-weight: 500; color: var(--texte-faible);
+  }
+  /* « A refaire » doit se distinguer de « disponible » ET de « faite »
+     sans reposer sur la couleur, parce qu'un daltonien doit voir la
+     difference. TROIS signaux non chromatiques se cumulent, et chacun
+     suffirait seul :
+       - la bordure passe en TIRETS (une forme, pas une teinte) ;
+       - le ::after dit « a refaire » en toutes lettres, la ou l'etape
+         faite dit « deja fait » ;
+       - il s'ouvre sur la marque « ! ».
+     La couleur ne fait que s'ajouter par-dessus : --rejet-texte tient
+     6,8:1 (clair) et 7,8:1 (sombre) sur --fond, et --rejet-vif en bordure
+     5,9:1 et 3,4:1 — au-dessus du seuil de 3:1 des elements non textuels.
+     Le padding perd les 2 px que la bordure epaissie prend, pour que le
+     bouton garde sa LARGEUR et son encombrement d'un etat a l'autre ; sa
+     HAUTEUR, elle, est tenue par la regle #actions button::after plus haut,
+     et non par ce padding.
+     Le libelle vient desormais de data-libelle-etat (etat_a_refaire, voir
+     eclipse/langues) et non plus d'un content: litteral, mais il reste
+     MESURE, pas estime, DANS LES DEUX LANGUES : le francais « ! a refaire :
+     sortie perimee » fait 127,1 px, l'anglais « ! redo: outdated output »
+     116,8 px, tous deux en Segoe UI Bold a 10,5 px (avances hmtx, sans
+     crenage), sous les 156 px du budget etroit. La formule francaise
+     precedente, « ! a refaire : la sortie ne correspond plus », en faisait
+     192,5 : elle tenait sur le rail large (212 px) et passait a la ligne sur
+     le rail etroit. */
+  #actions button.a-refaire {
+    border-width: 2px; border-style: dashed; border-color: var(--rejet-vif);
+    padding: 10px 12px;
+  }
+  #actions button.a-refaire::after {
+    content: attr(data-libelle-etat);
+    font-weight: 700; color: var(--rejet-texte);
+  }
+  /* « Indisponible » : l'etape ne PEUT pas tourner — pas de source du
+     tout, ou l'etape amont n'a jamais ete faite. Eteinte par APLATISSEMENT
+     et non par opacite, exactement comme la zone occupee plus bas et pour
+     la meme raison : une opacite de 0,5 se multipliait avec la couleur deja
+     attenuee et tombait a 2,6:1. Ici le fond et la bordure s'effacent (le
+     bouton cesse de ressembler a un bouton, qui est le signal recherche) et
+     le texte se pose a --texte-faible, 6,1:1 sur --panneau dans les deux
+     themes. Le :hover est neutralise avec : sur un bouton desactive, il
+     matche encore dans certains navigateurs. Bordure et padding sont remis
+     a leurs valeurs de base : sans cela, une etape qui passe de
+     « a refaire » a « indisponible » garderait les 2 px de l'autre. */
+  #actions button.indisponible, #actions button.indisponible:hover {
+    background: transparent; border-color: transparent; border-width: 1px;
+    border-style: solid; color: var(--texte-faible); box-shadow: none;
+    cursor: default; padding: 11px 13px;
+  }
+  #actions button.indisponible::after {
+    content: attr(data-libelle-etat); display: block; margin-top: 2px;
+    font-size: 10.5px; font-weight: 500; color: var(--texte-faible);
+  }
+  /* La case d'export PNG appartient a l'etape 3 : elle se pose juste sous
+     elle, en retrait, et se lit comme une option et non comme une
+     quatrieme action. Pas de display ici non plus : voir plus haut. */
+  #actions label.filtre {
+    margin: -2px 0 0 10px; font-size: 12px;
+  }
+  /* Zone de lancement pendant une tache : une seule tache a la fois cote
+     serveur (voir eclipse.taches), un clic ici ne pourrait que se faire
+     refuser. On l'eteint plutot que de laisser cliquer dans un refus.
+     Annuler n'est pas ici, il vit dans #avancement et reste donc actif.
+
+     Eteinte par APLATISSEMENT et non par opacite. Une opacite de 0,5 sur le
+     conteneur se multipliait avec la couleur deja attenuee de .refaire et
+     tombait a 2,6:1 de contraste sur le fond — sous tout seuil de
+     lisibilite. Ici le fond et la bordure des boutons s'effacent (ils
+     cessent de ressembler a des boutons, qui est le signal recherche) et le
+     texte se pose a --texte-faible, qui tient 6,1:1 sur --panneau dans les
+     deux themes. Le :hover est neutralise avec : sur un bouton desactive,
+     il matche encore dans certains navigateurs.
+
+     Ces regles viennent APRES les classes d'etat, a specificite egale
+     (1,1,1) : c'est l'ordre qui les fait gagner. Ne pas les remonter.
+     Elles ne touchent QUE l'apparence ; le grisage d'indisponibilite est un
+     AUTRE mecanisme, et les deux se composent dans majZoneLancement. */
+  #actions.occupe button, #actions.occupe button:hover {
+    background: transparent; border-color: transparent;
+    color: var(--texte-faible); box-shadow: none;
+  }
+  #actions.occupe button::after { color: var(--texte-faible); }
+  #actions.occupe button, #actions.occupe label.filtre,
+  #actions.occupe label.filtre input { cursor: default; }
+  /* « En cours » : l'etape qui travaille doit rester distincte de ses
+     voisines, que .occupe vient justement d'aplatir toutes ensemble. Le
+     premier selecteur pese (1,2,1) et gagne donc contre #actions.occupe
+     button quel que soit l'ordre ; le second, (1,1,1), couvre le cas ou
+     .occupe n'est pas encore pose et gagne par l'ordre contre les classes
+     d'etat qui le precedent.
+     Le mot « en cours... » porte l'information ; le lisere accent ne fait
+     que la doubler (--accent sur --fond : 6,2:1 clair, 3,8:1 sombre, un
+     element non textuel, seuil 3:1). Le texte, lui, reste a --texte et non
+     a --accent, qui ne tient que 3,5:1 en sombre — sous le seuil du petit
+     texte. */
+  #actions.occupe button.en-cours, #actions button.en-cours {
+    background: var(--fond); color: var(--texte);
+    border: 2px solid var(--accent); padding: 10px 12px;
+    box-shadow: none; cursor: default;
+  }
+  #actions.occupe button.en-cours::after, #actions button.en-cours::after {
+    content: attr(data-libelle-etat); display: block; margin-top: 2px;
+    font-size: 10.5px; font-weight: 700; color: var(--texte);
+  }
+
+  /* -- L'ETAPE 0 : la source, et la boite du systeme qui la choisit --
+     Le viewer peut s'ouvrir sur RIEN (« python -m eclipse viewer » sans
+     argument) : il faut donc, dans la page, de quoi en designer une. Ce
+     bloc vit dans le rail, au-dessus des trois etapes, parce qu'il est la
+     premiere d'entre elles. */
+  #panneau-source { display: flex; flex-direction: column; gap: 8px; }
+  #source-courante {
+    font-size: 12.5px; color: var(--texte);
+    background: var(--fond); border: 1px solid var(--bord); border-radius: 8px;
+    padding: 7px 10px; overflow-wrap: anywhere;
+  }
+  /* Sans source : dit par le mot ET par l'italique, pas par la seule
+     couleur. --texte-faible sur --fond tient 5,6:1 (clair) et 6,8:1
+     (sombre). */
+  #source-courante.vide { color: var(--texte-faible); font-style: italic; }
+  /* Un bouton desactive dont l'auteur a fixe fond et couleur ne recoit
+     AUCUN grisage du navigateur : sans cette regle, « Parcourir... »
+     aurait l'air cliquable pendant une tache alors qu'il ne l'est pas. Meme
+     aplatissement que la zone occupee, et le meme --texte-faible a 6,1:1
+     sur --panneau. */
+  #choisir-source:disabled, #choisir-source:disabled:hover {
+    background: transparent; border-color: transparent;
+    color: var(--texte-faible); cursor: default;
+  }
+  /* Le message du panneau de source : l'attente pendant que la boite du
+     systeme est ouverte, et les refus (fichier que ffmpeg ne lit pas,
+     changement pendant une tache, boite indisponible). Il ne passe PAS par
+     le bandeau d'erreur de la colonne : celui-ci porte l'avertissement du
+     serveur sur les decisions, et l'ecraser ferait disparaitre le seul
+     endroit ou l'operateur apprend que son tri n'est plus lu.
+
+     Aucune declaration de display : l'element porte [hidden], et une regle
+     d'auteur battrait cette regle-la du navigateur quelle que soit sa
+     specificite (piege deja documente trois fois dans ce fichier).
+     Le rail a --panneau pour fond : --texte-faible y tient 6,1:1 dans les
+     deux themes, et le mode « refus » passe a --rejet-texte, 7,5:1 (clair) /
+     7,0:1 (sombre) -- avec un « ! » en tete qui le signale sans la
+     couleur. */
+  #source-message {
+    font-size: 11.5px; color: var(--texte-faible); padding: 2px;
+    overflow-wrap: anywhere;
+  }
+  #source-message.refus { font-weight: 700; color: var(--rejet-texte); }
+
+  /* -- filtres de revue, dans le rail eux aussi (demande utilisateur) --
+     Ils sont dans leur PROPRE bloc et non dans #actions : la classe
+     .occupe eteint tout ce qui vit dans #actions pendant une tache, et
+     parcourir la pellicule reste possible pendant un rendu. */
+  #revue { display: flex; flex-direction: column; gap: 7px; }
+  /* Rien a filtrer tant que la source n'est pas prete. */
+  body.pas-pret #revue { display: none; }
+  /* LA SPECIFICITE N'Y CHANGE RIEN : pour des declarations normales, la
+     cascade compare l'ORIGINE avant elle, et une regle d'auteur bat la
+     regle [hidden] { display: none } du navigateur quels que soient les
+     poids de selecteur. Le commentaire qui tenait ici raisonnait sur la
+     seule specificite (0,1,1 contre 0,2,0) et concluait a l'envers : le
+     <label class="filtre" hidden> autour de la case PNG etait donc TOUJOURS
+     visible, et « exporter aussi la sequence PNG » flottait seul a chaque
+     chargement, avant l'apparition des trois boutons. D'ou la garde
+     explicite qui suit -- meme remede qu'a #avancement et #actions, deja
+     documente deux fois dans ce fichier. */
+  label.filtre {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 13px; color: var(--texte-faible); cursor: pointer;
+  }
+  label.filtre[hidden] { display: none; }
+  label.filtre input { cursor: pointer; accent-color: var(--accent); }
+
+  /* -- aide clavier : repliee par defaut. C'est le sacrifice vertical
+     assume de cette mise en page. C'est de la documentation, et chaque
+     raccourci sauf les fleches et +/- est deja rappele dans l'infobulle de
+     sa propre commande ; un clic la rouvre, et le rail defile alors seul,
+     sans jamais faire defiler la page. -- */
+  #aide {
+    font-size: 11.5px; color: var(--texte-faible);
+    border-top: 1px solid var(--bord); padding-top: 10px;
+  }
+  #aide summary {
+    cursor: pointer; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--texte-faible);
+  }
+  #aide summary:hover { color: var(--texte); }
+  .grille-aide { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+  .raccourci { display: flex; align-items: baseline; gap: 6px; }
+  #aide kbd {
+    background: var(--fond); border: 1px solid var(--bord-fort);
+    border-bottom-width: 2px; border-radius: 4px; padding: 0 5px;
+    font-family: ui-monospace, Consolas, monospace; font-size: 10.5px;
+    color: var(--texte); white-space: nowrap;
+  }
+
+  /* ------------------------------------------------------------------
+     LA COLONNE : l'image et ce qui la decrit. Deux rangees seulement,
+     l'etat des taches (qui se replie a zero quand il n'y a rien a dire)
+     et la scene, qui prend tout le reste.
+     ------------------------------------------------------------------ */
+  #colonne {
+    display: grid; grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0; padding: 14px; gap: 10px;
+  }
+  /* Vide, cette zone doit disparaitre completement. C'est un conteneur
+     flex et non une suite de marges : un enfant en display:none n'est pas
+     un element flex, il ne consomme donc PAS de gouttiere. Les quatre
+     enfants passent leur temps caches ([hidden] ou :empty) ; avec des
+     marges, chaque absence aurait laisse son blanc. #etat lui-meme n'est
+     jamais cache, poser un display dessus est donc sans danger. */
+  #etat { display: flex; flex-direction: column; gap: 10px; }
+  #erreur {
+    padding: 9px 12px; border-radius: 8px;
+    background: var(--rejet-vif); color: var(--sur-accent); font-weight: 600;
+  }
+  #erreur:empty { display: none; }
+  #manquant {
+    padding: 9px 12px;
+    background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
+  }
+  #manquant p { margin: 0; }
+  #avancement {
+    display: none; align-items: center; gap: 12px;
+    padding: 9px 12px; background: var(--panneau);
+    border: 1px solid var(--bord); border-radius: 8px;
+  }
+  /* Specificite plus elevee que la regle ci-dessus, pour que l'attribut
+     [hidden] gagne malgre le display: flex impose quand la tache tourne.
+     C'est [hidden] qui porte le mecanisme, il n'y a pas de classe .hidden. */
+  #avancement:not([hidden]) { display: flex; }
+  #avancement-genre {
+    font-weight: 600; text-transform: uppercase; font-size: 11px;
+    letter-spacing: 0.08em; color: var(--texte-faible);
+  }
+  #avancement-compte {
+    font-variant-numeric: tabular-nums; color: var(--texte-faible);
+    font-size: 12px;
+  }
+  #barre { flex: 1 1 auto; height: 10px; accent-color: var(--accent); }
+  /* Une phrase courte ne merite pas une bande pleine largeur : la boite
+     s'arrete a son texte (width: fit-content). Surtout, AUCUNE declaration
+     de display ici — l'element porte [hidden] et une regle #id gagnerait
+     contre celle du navigateur, le resultat resterait affiche en
+     permanence. Meme raison qu'au-dessus pour #actions. */
+  #resultat-tache {
+    width: fit-content; max-width: 100%; margin: 0;
+    padding: 7px 12px; border-radius: 8px;
+    background: var(--panneau); border: 1px solid var(--bord); font-size: 13px;
+  }
+
+  /* La pellicule n'a rien a montrer tant que la source n'est pas prete :
+     elle serait vide plutot qu'absente. L'etat des taches, lui, RESTE
+     visible — c'est justement la qu'on lit ce qui manque et ou tourne
+     l'extraction qui va le combler. */
+  body.pas-pret #scene { display: none; }
+  /* La pellicule prend la hauteur restante (1fr) ; les trois autres
+     rangees prennent la leur, et pas un pixel de plus. */
+  #scene {
+    display: grid; grid-template-rows: minmax(0, 1fr) auto auto auto;
+    min-height: 0; gap: 8px;
+  }
+
+  /* -- bandeau de vignettes -- */
+  /* La scene porte un fond a elle : le vide autour des vignettes voisines
+     (elles font 55 % de la taille de la centrale, l'ecart vient du script)
+     devient le fond d'une scene au lieu de flotter dans la page. Le fondu
+     lateral (mask) est une SECURITE : depuis que le script borne aussi la
+     largeur de la rangee (voir dessineBandeau), plus rien ne devrait etre
+     coupe par le bord ; si un cas limite le devenait, la coupe se lirait
+     comme un fondu et non comme un defaut. */
+  #bandeau {
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px; padding: 8px; min-height: 0; overflow: hidden;
+    background: var(--scene); border-radius: 12px;
+    -webkit-mask-image: linear-gradient(to right, transparent 0,
+      #000 40px, #000 calc(100% - 40px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0,
+      #000 40px, #000 calc(100% - 40px), transparent 100%);
+  }
+  .vignette-boite {
+    position: relative; flex: 0 0 auto;
+    background: var(--fond-image); border-radius: 6px; overflow: hidden;
+    border: 2px solid transparent;
+    box-shadow: 0 2px 10px var(--ombre);
+    transition: opacity 0.1s linear;
+  }
+  .vignette-boite img {
+    display: block; width: 100%; height: 100%; object-fit: cover;
+  }
+  .vignette-boite.centre { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Cadre colore = etat effectif (conservee(f)), en plus de la taille et
+     de l'opacite qui distinguent deja la vignette centrale. */
+  .vignette-boite.conservee { border-color: var(--garde); }
+  .vignette-boite.rejetee { background: var(--rejet); border-color: var(--rejet-vif); }
+  /* Le bleu (modification utilisateur) l'emporte toujours sur le vert/rouge :
+     regle apres .conservee et .rejetee pour gagner la cascade a specificite
+     egale. En relecture, c'est l'intervention de l'utilisateur qui doit
+     sauter aux yeux, pas seulement l'etat retenu/ecarte. */
+  .vignette-boite.modifiee { border-color: var(--modif-vif); }
+  /* La vignette centrale garde un cadre plus epais pour rester saillante. */
+  .vignette-boite.centre { border-width: 4px; }
+  /* Le voile est volontairement dense (0,7) : il se pose sur une photo
+     inconnue, et sur une image claire un voile a 0,45 laissait le texte
+     blanc a 3,4:1. A 0,7, le pire cas (photo blanche) tient 8,4:1. */
+  .etiquette {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    font-size: 11px; text-align: center; padding: 2px 4px;
+    background: var(--voile); color: var(--sur-image);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .vignette-boite.rejetee .etiquette { background: var(--voile-fort); }
+  .motif { color: var(--motif); font-weight: 600; }
+
+  /* -- etat de la frame courante, colle sous la pellicule -- */
+  /* La pastille etait poussee a l'extreme droite de la barre de transport,
+     loin de la vignette dont elle parle. Elle reste ici, contre l'image et
+     contre le compteur : les deux disent la meme frame. */
+  #pied-bandeau {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  /* Pas de classe de mise en page sur #statut : dessine() ecrase className
+     a chaque frame (« conservee » / « ecartee »). Tout passe par l'id. */
+  #statut {
+    font-weight: 700; font-size: 13px; letter-spacing: 0.01em;
+    padding: 6px 16px; border-radius: 999px; min-width: 118px;
+    text-align: center;
+  }
+  #statut.conservee { color: var(--garde-vif); border-color: var(--garde); }
+  #statut.ecartee { color: var(--rejet-texte); border-color: var(--rejet-vif); }
+  #infos {
+    color: var(--texte-faible); font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* -- timeline -- */
+  /* Le canvas peint chaque frame selectionnee sur toute la hauteur : c'est
+     une CARTE de la sequence. Les couleurs sont peintes par
+     dessineTimeline, qui relit ces memes jetons a chaque passe ; la
+     legende qui la suit les nomme. */
+  #timeline {
+    display: block; width: 100%; height: 44px;
+    background: var(--piste); border: 1px solid var(--bord); border-radius: 8px;
+    cursor: pointer;
+  }
+
+  /* -- barre du bas : lecture a gauche, legende des couleurs a droite.
+     Une seule rangee pour les deux : chaque rangee prise ici est prise a
+     l'image. -- */
+  #bas {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap;
+  }
+  #transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #legende {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    font-size: 11.5px; color: var(--texte-faible);
+  }
+  .cle::before {
+    content: ""; display: inline-block; width: 11px; height: 11px;
+    border-radius: 3px; margin-right: 6px; vertical-align: -1px;
+  }
+  .cle-garde::before { background: var(--garde); }
+  .cle-rejet::before { background: var(--rejet-vif); }
+  .cle-modif::before { background: var(--modif-vif); }
+  /* Le seul carre de la legende a porter un contour. --ecart est choisi
+     pour contraster avec le VERT, le ROUGE et le BLEU de la timeline, pas
+     avec le fond de la page : sur --fond il ne tient que 1,37:1 en clair, la
+     ou les trois autres pastilles se detachent d'elles-memes. Le contour
+     donne la forme : --texte-faible tient 5,6:1 sur --fond et 4,1:1 sur
+     l'or. En sombre le contour est superflu (l'or tient 17:1 sur --fond) ;
+     il y est garde par symetrie, et il s'y voit encore a 2,5:1. */
+  .cle-ecart::before {
+    background: var(--ecart); border: 1px solid var(--texte-faible);
+  }
+</style>
+
+<script>
+// Theme choisi par l'utilisateur, applique AVANT que le corps ne soit
+// analyse : sinon la page s'affiche une fraction de seconde dans le theme
+// du systeme avant de basculer dans le theme choisi. Pas d'attribut =
+// « suivre le systeme », c'est le cas par defaut (voir prefers-color-scheme).
+try {
+  const choix = localStorage.getItem("viewer-theme");
+  if (choix === "clair" || choix === "sombre")
+    document.documentElement.dataset.theme = choix === "clair" ? "light" : "dark";
+} catch (e) { /* localStorage indisponible : on suit le systeme, sans bruit */ }
+</script>
+
+<aside id="rail">
+  <h1 data-t="titre_page">Revue des frames</h1>
+
+  <!-- L'ETAPE 0. Le viewer peut s'ouvrir sur RIEN (« python -m eclipse
+       viewer » sans argument) : la page disait alors « cette source n'est
+       pas encore prete » — honnete sur l'etat, muette sur le fait qu'il n'y
+       avait AUCUNE source — devant trois boutons actifs qui rendaient 400.
+       C'est ce panneau qui ferme ce trou : il nomme la source courante, et
+       il en fait choisir une, par la boite de dialogue du systeme. -->
+  <section id="panneau-source">
+    <h2 data-t="panneau_source_titre">Source</h2>
+    <!-- AUCUN data-t ici : ce noeud alterne entre "Chargement...", le nom du
+         fichier ou "Aucune source choisie" -- ecrit par afficheSource, PAS
+         par la boucle [data-t] d'appliqueLangue. C'etait le quatrieme cas
+         du meme piege que #theme et les trois boutons d'etape (voir leurs
+         commentaires) : un data-t ici effacait le nom de fichier au profit
+         de "Chargement..." a chaque changement de langue, une fois une
+         source connue. source_chargement et source_aucune sont employees en
+         t() litteral dans rafraichitTextesDynamiques / afficheSource. -->
+    <div id="source-courante" class="vide">Chargement...</div>
+    <!-- LA BOITE DU SYSTEME, a la place de l'explorateur web. Celui-ci
+         listait un dossier a la fois, sans completion ni favoris ni
+         « recents » ; l'utilisateur l'a essaye et a demande « un vrai
+         explorateur de fichier ». Un seul bouton suffit desormais : la
+         navigation entiere est celle du systeme (POST /api/parcourir).
+         Plus d'aria-expanded : rien ne se deplie ici. -->
+    <button id="choisir-source" data-t="bouton_parcourir"
+            data-t-title="bouton_parcourir_infobulle"
+            title="Ouvrir la boite de dialogue du systeme et choisir la video a traiter">Parcourir...</button>
+    <!-- role=status : l'attente pendant que la boite est ouverte et les
+         refus doivent etre annonces, pas seulement peints. -->
+    <div id="source-message" role="status" hidden></div>
+  </section>
+
+  <section id="panneau-taches">
+    <h2 data-t="panneau_taches_titre">Chaine de traitement</h2>
+    <!-- Tous caches jusqu'a la premiere reponse de /api/frames : c'est elle
+         qui dit dans quel etat est chaque etape, donc quel libelle porter.
+         Les montrer avant, c'est afficher brievement le mauvais.
+         Les libelles ecrits ici ne servent qu'a rendre le balisage lisible :
+         regleEtape ecrit les TROIS depuis LIBELLES_ETAPES des la premiere
+         reponse, l'etape 3 comprise. Les changer ici sans les changer la
+         ne changerait rien a l'ecran. AUCUN data-t sur ces trois boutons :
+         appliqueLangue ecrirait textContent par-dessus et effacerait
+         justement le libelle « Refaire ... » que regleEtape vient de poser
+         -- meme piege que pour #theme plus bas. Les cles bouton_vignettes /
+         bouton_analyse / bouton_rendu existent deja dans les tables (tache
+         1) mais restent sans emploi litteral tant que LIBELLES_ETAPES n'est
+         pas cable sur t() (tache 3) ; d'ici la, elles vivent dans
+         _CLES_SERVEUR (tests/test_langues.py) pour ne pas etre signalees
+         comme du texte mort. -->
+    <div id="actions">
+      <button id="lancer-vignettes" hidden>1. Extraire les images</button>
+      <button id="lancer-analyse" hidden>2. Analyser les images</button>
+      <button id="lancer-rendu" hidden>3. Produire la video finale</button>
+      <label class="filtre" hidden><input type="checkbox" id="rendu-png"> <span data-t="option_png">exporter aussi la sequence PNG</span></label>
+    </div>
+  </section>
+
+  <!-- Trois filtres composables (voir dansSelection dans le script), aucun
+       coche par defaut : "aucun filtre actif" = la sequence entiere, c'est le
+       cas de base de la regle de composition. -->
+  <section id="revue">
+    <h2 data-t="filtres_titre">Ne parcourir que</h2>
+    <label class="filtre" data-t-title="filtre_retenues_infobulle"
+           title="Ne parcourir que les frames retenues dans le montage final (r)">
+      <input type="checkbox" id="chk-filtre-retenues">
+      <span data-t="filtre_retenues">Retenues</span>
+    </label>
+    <label class="filtre" data-t-title="filtre_non_retenues_infobulle"
+           title="Ne parcourir que les frames ecartees du montage final (e)">
+      <input type="checkbox" id="chk-filtre-non-retenues">
+      <span data-t="filtre_non_retenues">Non retenues</span>
+    </label>
+    <label class="filtre" data-t-title="filtre_modifiees_infobulle"
+           title="Ne parcourir que les frames que j'ai modifiees (m)">
+      <input type="checkbox" id="chk-filtre-modifiees">
+      <span data-t="filtre_modifiees">Mes modifications</span>
+    </label>
+  </section>
+
+  <div id="pied-rail">
+    <details id="aide">
+      <summary data-t="aide_titre">Raccourcis clavier</summary>
+      <div class="grille-aide">
+        <div class="raccourci"><kbd data-t="touche_espace">espace</kbd> <span data-t="raccourci_lecture">lecture / pause</span></div>
+        <div class="raccourci"><kbd data-t="touche_gauche">gauche</kbd> <kbd data-t="touche_droite">droite</kbd> <span data-t="raccourci_frame">une frame</span></div>
+        <!-- k n p r e m ne portent AUCUNE cle : ce sont les touches reelles
+             lues par le keydown (voir plus haut, "e.key === ..."), et les
+             traduire desynchroniserait l'affiche du raccourci d'avec la
+             touche qui marche vraiment. -->
+        <div class="raccourci"><kbd>k</kbd> <span data-t="raccourci_statut">bascule le statut</span></div>
+        <div class="raccourci"><kbd>n</kbd> <kbd>p</kbd> <span data-t="raccourci_navigation">frame suivante / precedente</span></div>
+        <div class="raccourci"><kbd>r</kbd> <span data-t="raccourci_filtre_retenues">filtre retenues</span></div>
+        <div class="raccourci"><kbd>e</kbd> <span data-t="raccourci_filtre_non_retenues">filtre non-retenues</span></div>
+        <div class="raccourci"><kbd>m</kbd> <span data-t="raccourci_filtre_modifiees">filtre mes modifications</span></div>
+        <div class="raccourci"><kbd>+</kbd> <kbd>-</kbd> <span data-t="raccourci_zoom">zoom du bandeau</span></div>
+      </div>
+    </details>
+    <!-- AUCUN data-t sur le texte de ce bouton : il porte l'etat courant
+         ("Theme : sombre"), ecrit par l'IIFE de bascule plus bas dans ce
+         fichier -- un data-t="bouton_theme" serait ecrase a chaque
+         changement de langue, meme piege que les trois boutons d'etape
+         ci-dessus. La cle est neanmoins EMPLOYEE, litteralement, par cette
+         IIFE elle-meme (t("bouton_theme")) : pas d'entree dans
+         _CLES_SERVEUR pour elle. Le titre, lui, est statique : data-t-title
+         est sans risque. -->
+    <button id="theme" data-t-title="bouton_theme_infobulle"
+            title="Theme de la page : systeme, clair ou sombre">Theme</button>
+    <!-- Meme raison qu'au-dessus : le texte du bouton langue porte le choix
+         courant, ecrit par le selecteur (voir le bloc de script en fin de
+         fichier). selecteur_langue et les trois langue_* y sont employees
+         en t() litteral, jamais via data-t. -->
+    <button id="langue">Langue</button>
+    <!-- AUCUN data-t sur ce noeud : son texte est ecrit par chargeVersion,
+         et une passe de traduction l'effacerait -- meme piege que les
+         boutons theme et langue ci-dessus. Le titre est statique, donc
+         data-t-title est sans risque.
+         Le numero lui-meme ne se traduit pas : c'est une reference, pas de
+         la prose. Vide au depart plutot que rempli d'un texte d'attente :
+         un « chargement... » qui resterait affiche si la route echouait
+         mentirait plus qu'un espace vide. -->
+    <div id="version" data-t-title="version_infobulle"
+         title="Version du viewer et etat du depot"></div>
+  </div>
+</aside>
+
+<main id="colonne">
+  <div id="etat">
+    <div id="erreur"></div>
+    <div id="manquant" hidden>
+      <!-- Deux phrases exclusives pour deux etats differents. Dire « cette
+           source n'est pas encore prete » quand il n'y a pas de source du
+           tout etait le defaut que la tache 7 ferme : le message etait
+           honnete sur la preparation et muet sur l'essentiel. -->
+      <p id="sans-source" hidden><span data-t="sans_source_avant">Aucune source choisie. Cliquer</span>
+        <em data-t="sans_source_lien">Choisir une source</em>
+        <span data-t="sans_source_apres">dans le rail, a gauche, pour designer la video a traiter.</span></p>
+      <p id="manque-prete"><span data-t="manque_prete_intro">Cette source n'est pas encore prete : </span><span id="liste-manque"></span></p>
+    </div>
+    <div id="avancement" hidden>
+      <span id="avancement-genre"></span>
+      <progress id="barre" max="100" value="0"></progress>
+      <span id="avancement-compte"></span>
+      <button id="annuler" data-t="bouton_annuler">Annuler</button>
+    </div>
+    <p id="resultat-tache" hidden></p>
+  </div>
+
+  <div id="scene">
+    <div id="bandeau"></div>
+
+    <div id="pied-bandeau">
+      <button id="statut" data-t-title="bouton_statut_infobulle"
+              title="Basculer conserver / ecarter (k)"></button>
+      <div id="infos"></div>
+    </div>
+
+    <canvas id="timeline" height="40"></canvas>
+
+    <div id="bas">
+      <div id="transport">
+        <button id="btn-lecture" data-t="bouton_lecture" data-t-title="bouton_lecture_infobulle"
+                title="Lecture / pause (espace)">Lecture</button>
+        <button id="btn-stop" data-t="bouton_stop" data-t-title="bouton_stop_infobulle"
+                title="Stop">Stop</button>
+        <button id="btn-prec" data-t="bouton_precedent" data-t-title="bouton_precedent_infobulle"
+                title="Frame precedente de la selection (p)">&lt;&lt; Precedent</button>
+        <button id="btn-suiv" data-t="bouton_suivant" data-t-title="bouton_suivant_infobulle"
+                title="Frame suivante de la selection (n)">Suivant &gt;&gt;</button>
+      </div>
+      <div id="legende">
+        <span class="cle cle-garde" data-t="legende_retenue">Retenue</span>
+        <span class="cle cle-rejet" data-t="legende_ecartee">Ecartee</span>
+        <span class="cle cle-modif" data-t="legende_modifiee">Decidee par moi</span>
+        <span class="cle cle-ecart" data-t="legende_ecart" data-t-title="legende_ecart_infobulle"
+              title="Frames dont la decision differe de celle appliquee au rendu ; une sortie perimee peut n'en marquer aucune">Ecart avec le rendu</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// Les libelles, dans les deux langues, charges une fois. Changer de langue
+// ne demande alors aucun aller-retour : la table de l'autre langue est deja
+// la, et une seule passe suffit -- la pellicule chargee, la position courante
+// et une tache en cours ne doivent pas en souffrir.
+//
+// « systeme » est l'ABSENCE de choix, donc navigator.language, exactement
+// comme « systeme » est l'absence de data-theme pour la bascule de theme.
+const CLE_LANGUE = "viewer-langue";
+const LANGUES = ["systeme", "francais", "english"];
+const CODE = { francais: "fr", english: "en" };
+let tables = null;
+let langueCourante = "systeme";
+
+function langueEffective() {
+  if (langueCourante !== "systeme") return CODE[langueCourante];
+  return (navigator.language || "fr").toLowerCase().startsWith("en") ? "en" : "fr";
+}
+
+// Rend le libelle, en choisissant la forme de pluriel quand l'entree en a.
+// Intl.PluralRules est du navigateur, pas une dependance : la page n'a
+// toujours aucune dependance JavaScript.
+function t(cle, valeurs) {
+  const table = tables ? tables[langueEffective()] : null;
+  let modele = table ? table[cle] : undefined;
+  if (modele === undefined) return cle;   // visible, donc reparable
+  if (typeof modele === "object") {
+    const n = valeurs && valeurs.n;
+    // Intl.PluralRules est standard depuis longtemps, mais rien dans ce
+    // projet ne l'a mesure sur les navigateurs vises. Sans ce repli, son
+    // absence ferait lever t() et la page cesserait de s'afficher pour un
+    // choix de pluriel -- une panne totale pour un detail de grammaire.
+    let forme = "other";
+    if (typeof Intl !== "undefined" && Intl.PluralRules)
+      forme = new Intl.PluralRules(langueEffective()).select(n);
+    else if (n === 1) forme = "one";
+    modele = modele[forme] !== undefined ? modele[forme] : modele.other;
+  }
+  if (!valeurs) return modele;
+  return modele.replace(/\{(\w+)\}/g,
+    (tout, nom) => (nom in valeurs ? String(valeurs[nom]) : tout));
+}
+
+function appliqueLangue() {
+  document.documentElement.lang = langueEffective();
+  // tables vaut null avant la fin de chargeLangues() -- et donc au moment ou
+  // le selecteur de langue s'initialise (bloc de script de fin de corps,
+  // synchrone) pendant que demarre() est deja suspendu sur son premier
+  // await. t(cle) rendrait alors la cle elle-meme (visible, donc reparable,
+  // voir t() plus haut), et cette fonction ecraserait TOUT le texte de
+  // repli ecrit dans le balisage par des noms de cles bruts. Ne rien
+  // repeindre ici tant que tables est null laisse ce repli affiche -- du
+  // francais lisible, pas la bonne langue si l'utilisateur a choisi
+  // anglais, mais jamais une cle brute. chargeLangues() rappelle cette
+  // fonction des que tables est pose (ou reste null pour de bon si
+  // /api/langues est injoignable, auquel cas le repli reste affiche
+  // indefiniment -- toujours lisible).
+  if (!tables) return;
+  for (const el of document.querySelectorAll("[data-t]"))
+    el.textContent = t(el.dataset.t);
+  for (const el of document.querySelectorAll("[data-t-title]"))
+    el.title = t(el.dataset.tTitle);
+  document.title = t("titre_page");
+  if (typeof rafraichitTextesDynamiques === "function")
+    rafraichitTextesDynamiques();
+}
+
+async function chargeLangues() {
+  try {
+    const r = await fetch("/api/langues");
+    if (r.ok) tables = await r.json();
+  } catch (e) { /* les libelles ecrits dans le balisage restent affiches */ }
+  appliqueLangue();
+}
+
+// La version du viewer, en bas du rail. Muette en cas d'echec : savoir sur
+// quel commit on tourne est un confort, afficher la page est la fonction.
+// N'est PAS attendue par demarre() : la page ne doit pas retarder son
+// premier rendu pour une reference.
+async function chargeVersion() {
+  try {
+    const r = await fetch("/api/version");
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById("version");
+    if (el && d.version) el.textContent = d.version;
+  } catch (e) { /* le noeud reste vide, la page fonctionne */ }
+}
+</script>
+
+<script>
+// Etat partage et fonctions de logique : voir la tache 6 du plan, squelette
+// impose. Ne pas reimplementer ces fonctions autrement, seul dessine() est
+// a ecrire ici.
+let etat = { frames: [], fps: 30, pos: 0, rayon: 1, lecture: null };
+const cacheImg = new Map();
+
+// Les numeros de frame dont la DECISION differe de celle appliquee au rendu
+// deja produit (voir descripteur.compare cote serveur). Un seuil ou un
+// cadrage change perime la sortie sans rien peindre ici : la comparaison ne
+// porte que sur le tri. Le bandeau dit deja « sortie perimee » ; ceci dit OU,
+// pour qu'on puisse juger si un rendu de douze minutes en vaut la peine.
+//
+// A part de etat.frames, et c'est voulu : rafraichitEtapes, rappelee
+// apres chaque decision, remplace cet ensemble sans toucher a la pellicule
+// chargee ni a la position courante. Vide tant qu'aucun rendu n'est sur le
+// disque — il n'y a alors rien a quoi comparer.
+let divergentes = new Set();
+
+// Seul endroit ou la regle d'etat effectif existe cote client.
+function conservee(f) {
+  if (f.ecart_utilisateur === "conserver") return true;
+  if (f.ecart_utilisateur === "ecarter") return false;
+  return f.verdict === null;
+}
+
+// Frame modifiee par l'utilisateur, quel que soit le sens de la modification
+// (conserver ou ecarter) : c'est l'ensemble parcouru en 2e passe de revue.
+function modifiee(f) {
+  return f.ecart_utilisateur !== null;
+}
+
+function vignette(n) {
+  if (!cacheImg.has(n)) {
+    const img = new Image();
+    img.src = `/thumb/${n}.jpg`;
+    cacheImg.set(n, img);
+  }
+  return cacheImg.get(n);
+}
+
+function precharge() {                    // avance de 30 de chaque cote
+  for (let n = etat.pos - 30; n <= etat.pos + 30; n++)
+    if (n >= 0 && n < etat.frames.length) vignette(n);
+  for (const n of [...cacheImg.keys()])   // libere ce qui s'eloigne
+    if (Math.abs(n - etat.pos) > 120) cacheImg.delete(n);
+}
+
+function vaVers(n) {
+  etat.pos = Math.max(0, Math.min(etat.frames.length - 1, n));
+  precharge(); dessine();
+}
+
+// Composition des trois filtres (retenues / non-retenues / mes
+// modifications) en un seul predicat de selection. C'est CE predicat qui
+// pilote a la fois le bandeau, la timeline, les fleches, n/p et la lecture :
+// un seul endroit ou la regle de composition existe.
+function dansSelection(f) {
+  const fR = elFiltreRetenues.checked;
+  const fN = elFiltreNonRetenues.checked;
+  const fM = elFiltreModifiees.checked;
+  let base;
+  if (fR && fN) {
+    // Cas coherent, pas special : retenues + non-retenues couvre tout,
+    // comme aucun filtre actif sur cet axe. On ne l'interdit pas, c'est
+    // l'intersection qui le donne naturellement.
+    base = true;
+  } else if (fR) {
+    base = conservee(f);
+  } else if (fN) {
+    base = !conservee(f);
+  } else {
+    base = true; // ni retenues ni non-retenues actif : pas de restriction ici
+  }
+  return fM ? (base && modifiee(f)) : base;
+}
+
+// Vrai si au moins un des trois filtres est actif. Sert a distinguer "aucun
+// filtre" (affichage plein, sans rang) d'un filtre qui se trouve selectionner
+// tout (retenues + non-retenues ensemble, voir dansSelection).
+function filtreActif() {
+  return elFiltreRetenues.checked || elFiltreNonRetenues.checked || elFiltreModifiees.checked;
+}
+
+// Liste des indices reels des frames actuellement selectionnees. Recalculee
+// a chaque appel plutot que mise en cache : le cout est negligeable (quelques
+// milliers de frames) et ca evite d'avoir a invalider un cache a chaque
+// changement de filtre ou de decision utilisateur.
+function indicesSelectionnes() {
+  const l = [];
+  etat.frames.forEach((f, n) => { if (dansSelection(f)) l.push(n); });
+  return l;
+}
+
+// k-ieme frame de la selection en s'eloignant de "depuis" dans la direction
+// sens (+1 = vers la droite, -1 = vers la gauche). Renvoie null si on sort
+// des bornes avant d'en trouver k. Sert au pas simple (k=1, voir
+// pasSelection) et au calcul des voisins du bandeau.
+function kEmeSelection(depuis, sens, k) {
+  let n = depuis, trouve = 0;
+  while (true) {
+    n += sens;
+    if (n < 0 || n >= etat.frames.length) return null;
+    if (dansSelection(etat.frames[n])) {
+      trouve++;
+      if (trouve === k) return n;
+    }
+  }
+}
+
+// Pas simple au sein de la selection (fleches, n/p, voir keydown plus bas) :
+// si on ne trouve rien dans ce sens, on reste sur place. Quand aucun filtre
+// n'est actif, la selection est la sequence entiere et ce pas se comporte
+// donc comme un simple +1/-1 d'antan.
+function pasSelection(sens) {
+  const n = kEmeSelection(etat.pos, sens, 1);
+  if (n !== null) vaVers(n);
+}
+
+// Cible d'activation d'un filtre (case a cocher ou raccourci clavier) : la
+// frame selectionnee la plus proche a partir de la position courante
+// (comprise), en cherchant d'abord vers l'avant ; si aucune selection ne
+// suit, on retombe sur la derniere de toutes. Suppose la selection non vide
+// (verifie par l'appelant juste avant, voir onFiltreChange).
+function cibleActivationFiltre() {
+  for (let n = etat.pos; n < etat.frames.length; n++)
+    if (dansSelection(etat.frames[n])) return n;
+  for (let n = etat.frames.length - 1; n >= 0; n--)
+    if (dansSelection(etat.frames[n])) return n;
+  return null;
+}
+
+// Compose le texte d'un FAIT serveur ({code, ...valeurs}) : le serveur ne
+// sait pas dans quelle langue la page s'affiche, il envoie un code et ses
+// valeurs, et c'est ici qu'on les traduit. tri_orphelin porte parfois un
+// second fait, le conseil de renommage -- donne seulement s'il ne peut rien
+// detruire (voir reprise_possible, viewer._tri_orpheline) -- que la cle
+// principale ne redit pas, l'anaphore ("le premier"/"le second") ne
+// survivant pas a la traduction.
+function texteDuFait(f) {
+  let texte = t(f.code, f);
+  if (f.code === "tri_orphelin" && f.reprise_possible)
+    texte += " " + t("tri_orphelin_reprise", f);
+  return texte;
+}
+
+// Bandeau d'erreur : montre a l'utilisateur qu'une decision n'a PAS ete
+// enregistree, plutot que de laisser l'etat local divergent en silence
+// (voir bascule ci-dessous). `message` est soit une CLE (la plupart des
+// appels -- traduite ICI, jamais par l'appelant : voir derniereErreur), soit
+// la LISTE DE FAITS envoyee par /api/frames (voir chargeFrames) -- composee
+// ici, fait par fait, par texteDuFait. Retenu pour rafraichitTextesDynamiques,
+// qui rejoue cette meme valeur pour repeindre le bandeau -- l'avertissement
+// de tri orphelin y compris -- dans la nouvelle langue sans reinterroger le
+// serveur.
+function signaleErreur(message) {
+  derniereErreur = message;
+  const el = document.getElementById("erreur");
+  el.textContent = Array.isArray(message)
+    ? message.map(texteDuFait).join(" ")
+    : t(message);
+}
+function effaceErreur() {
+  derniereErreur = null;
+  document.getElementById("erreur").textContent = "";
+}
+
+// Un fetch peut ne jamais recevoir de reponse : le viewer a ete arrete
+// (Ctrl+C dans le terminal), ou il attend la fin d'une tache pendant 30 s,
+// serve_forever ayant deja rendu la main et la socket ne repondant plus.
+// Sans traitement, la promesse est rejetee sans etre attrapee : la page se
+// fige sans un mot et la console se remplit de rejets.
+function signaleServeurInjoignable() {
+  signaleErreur("erreur_serveur_injoignable");
+}
+
+// Rend l'objet JSON, ou leve. Une reponse d'erreur est traitee comme un echec
+// plutot que passee a json(), qui rendrait un objet dont la suite ne saurait
+// rien faire.
+async function litJSON(chemin) {
+  const r = await fetch(chemin);
+  if (!r.ok) throw new Error(chemin + " : " + r.status);
+  return r.json();
+}
+
+async function bascule() {
+  const f = etat.frames[etat.pos];
+  const statut = conservee(f) ? "ecarter" : "conserver";
+  let r;
+  try {
+    r = await fetch("/api/decision", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ n: etat.pos, statut }),
+    });
+  } catch (e) {
+    // Requete jamais partie ou reponse jamais recue : rien n'a ete ecrit
+    // cote serveur, l'etat local ne doit pas bouger.
+    return signaleErreur("erreur_connexion_perdue");
+  }
+  if (!r.ok) {
+    // Le serveur a repondu, mais a refuse la requete (400/404/500...) :
+    // l'etat local ne doit pas bouger, sous peine d'afficher une decision
+    // qui n'a jamais ete ecrite sur disque.
+    return signaleErreur("erreur_decision_refusee");
+  }
+  effaceErreur();
+  // Le serveur retire l'ecart s'il rejoint l'algorithme ; on reflete la
+  // meme regle localement plutot que de recharger toute la liste.
+  const auto = f.verdict === null;
+  f.ecart_utilisateur = (auto === (statut === "conserver")) ? null : statut;
+  // Si ce bascule vient de retirer etat.pos de la selection courante (un
+  // filtre actif ne la couvre plus), on NE saute PAS ailleurs : on reste sur
+  // la frame qu'on est en train de reviser. dessine() affichera juste que le
+  // centre est hors selection, et c'est la prochaine navigation (pasSelection)
+  // qui ira chercher la frame selectionnee la plus proche. Regle deja en
+  // vigueur pour le filtre "mes modifications", etendue ici aux trois.
+  dessine();
+  // Et LA demonstration du chantier : apres un rendu, ecarter une frame fait
+  // basculer l'etape 3 en « a refaire ». Rien ne l'afficherait sans ce
+  // rappel — le serveur ne pousse rien, et bascule() ne recharge pas la
+  // pellicule (chargeFrames rappelle vaVers(0), ce qui renverrait la revue a
+  // la premiere frame a chaque touche k).
+  //
+  // Attendu, et non lance puis oublie : bascule() est deja asynchrone, ses
+  // appelants ne l'attendent pas davantage, et l'attendre ici rend l'ordre
+  // des mises a jour deterministe plutot que dependant du reseau.
+  await rafraichitEtapes();
+}
+
+// Hauteur du lisere, en pixels du canvas (qui en fait 40 de haut). Assez
+// pour se voir a cote d'une barre de 40 px, assez peu pour que la couleur
+// d'etat de la frame reste majoritaire dessous.
+const HAUTEUR_LISERE = 6;
+
+// La timeline ne dessine plus que les frames selectionnees (voir
+// dansSelection), a la demande explicite de l'utilisateur : avant, elle
+// montrait toujours la sequence entiere quel que soit le filtre. L'axe est
+// donc reparti sur le nombre de frames selectionnees, pas sur le nombre
+// total de frames.
+function dessineTimeline() {
+  const c = document.getElementById("timeline");
+  const ctx = c.getContext("2d");
+  const L = c.width;
+  const sel = indicesSelectionnes();
+  const M = sel.length;
+  ctx.clearRect(0, 0, L, c.height);
+  if (M === 0) return; // selection vide : rien a dessiner (garde-fou filtres)
+
+  // Les couleurs sont LUES sur la feuille a chaque passe, et non ecrites en
+  // dur ici : un canvas ne suit pas la cascade, et la page a deux themes.
+  // Ecrites en dur, elles resteraient celles de l'autre theme apres une
+  // bascule. Relire a chaque dessin suffit : la bascule appelle
+  // dessineTimeline (voir le script de theme en fin de page).
+  const jetons = getComputedStyle(document.documentElement);
+  const coul = (nom) => jetons.getPropertyValue(nom).trim();
+  const cGarde = coul("--garde");
+  const cRejet = coul("--rejet-vif");
+  const cModif = coul("--modif-vif");
+  const cEcart = coul("--ecart");
+  const cCurseur = coul("--curseur");
+
+  sel.forEach((n, i) => {
+    const f = etat.frames[n];
+    const x0 = i / M * L, x1 = (i + 1) / M * L;
+    // Le bleu (modification utilisateur) l'emporte sur le vert/rouge, meme
+    // logique que le cadre du bandeau : voir la regle CSS .modifiee.
+    ctx.fillStyle = modifiee(f) ? cModif : (conservee(f) ? cGarde : cRejet);
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), c.height);
+  });
+
+  // LE LISERE DES ECARTS AVEC LE RENDU. Une bande en haut de la barre, et
+  // non une asterisque : a 2556 frames dans 1900 px une frame fait 0,7 px,
+  // et aucun glyphe ne s'y dessine. La timeline n'a qu'une echelle -- elle
+  // etale TOUTE la selection sur la largeur du canvas, et + / - ne la
+  // touchent pas, ils zooment le bandeau de vignettes. Sur la sequence
+  // entiere les divergences se lisent donc en amas ; ce sont les filtres de
+  // revue (r / e / m) qui reduisent la selection, et c'est la que chaque
+  // frame retrouve sa marque propre.
+  //
+  // APRES les barres, qu'il recouvre — c'est une marque qui s'ajoute a
+  // l'etat de la frame, elle ne le remplace pas —, et AVANT le curseur, qui
+  // doit rester lisible par-dessus.
+  ctx.fillStyle = cEcart;
+  sel.forEach((n, i) => {
+    if (!divergentes.has(n)) return;
+    const x0 = i / M * L, x1 = (i + 1) / M * L;
+    // Le meme Math.max(1, ...) que les barres : sous le pixel, une frame
+    // isolee disparaitrait purement et simplement.
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), HAUTEUR_LISERE);
+  });
+
+  // Position du curseur : rang de etat.pos dans la selection si elle en fait
+  // partie ; sinon (k vient de l'en retirer, voir bascule) on interpole via
+  // le nombre de frames selectionnees strictement avant elle, pour que le
+  // curseur reste a un endroit coherent plutot que de disparaitre.
+  let rang = sel.indexOf(etat.pos);
+  if (rang === -1) rang = sel.filter((n) => n < etat.pos).length;
+  ctx.fillStyle = cCurseur;
+  ctx.fillRect(Math.floor(rang / M * L) - 1, 0, 3, c.height);
+}
+
+function lecture(marche) {
+  clearInterval(etat.lecture);
+  etat.lecture = marche ? setInterval(() => {
+    // La lecture avance dans la MEME selection que les fleches et n/p (voir
+    // dansSelection) : les trois filtres se composent une fois pour toutes,
+    // pas de logique separee pour la lecture.
+    const suivante = kEmeSelection(etat.pos, +1, 1);
+    if (suivante === null) return lecture(false);
+    vaVers(suivante);
+  }, 1000 / etat.fps) : null;
+}
+
+// n/p et les fleches parcourent desormais tous la MEME selection (voir
+// dansSelection / pasSelection) : plus de rejet suivant/precedent special,
+// plus de fleches qui ignorent le filtre "mes modifications".
+document.addEventListener("keydown", (e) => {
+  // UNE SAISIE DE TEXTE GARDE SES TOUCHES. Le champ qui l'imposait — le
+  // chemin de l'ancien explorateur web, ou taper « k » ecartait la frame
+  // courante et l'espace lancait la lecture — est parti avec lui, et la page
+  // ne porte plus aujourd'hui que des cases a cocher, que cette ligne laisse
+  // justement passer. La garde est donc INERTE en l'etat : elle est gardee
+  // parce qu'elle coute une ligne et que le jour ou un champ revient, son
+  // absence serait un defaut silencieux, decouvert en tapant dedans.
+  const cible = e.target;
+  if (cible && cible.tagName === "INPUT" && cible.type !== "checkbox") return;
+  if (e.key === " ") { e.preventDefault(); lecture(!etat.lecture); }
+  else if (e.key === "ArrowRight") pasSelection(+1);
+  else if (e.key === "ArrowLeft") pasSelection(-1);
+  else if (e.key === "k") bascule();
+  else if (e.key === "n") pasSelection(+1);
+  else if (e.key === "p") pasSelection(-1);
+  else if (e.key === "r") { elFiltreRetenues.checked = !elFiltreRetenues.checked; onFiltreChange(elFiltreRetenues); }
+  else if (e.key === "e") { elFiltreNonRetenues.checked = !elFiltreNonRetenues.checked; onFiltreChange(elFiltreNonRetenues); }
+  else if (e.key === "m") { elFiltreModifiees.checked = !elFiltreModifiees.checked; onFiltreChange(elFiltreModifiees); }
+  else if (e.key === "+") { etat.rayon = Math.min(5, etat.rayon + 1); dessine(); }
+  else if (e.key === "-") { etat.rayon = Math.max(1, etat.rayon - 1); dessine(); }
+});
+
+// Chargement initial et rattachement a une tache en cours : voir chargeFrames
+// et demarre() a la fin de ce script (tache 6). etat.frames ne doit etre
+// rempli qu'apres avoir verifie que la source est prete : le corps "pas
+// pret" de /api/frames n'a pas de cle frames, et vaVers(0) sans garde
+// plantait la page (ancien trou, ferme ici).
+
+// -- ce qui reste a ecrire : le rendu visuel --
+
+// Taille MAXIMALE d'une vignette centrale, et rapport d'aspect de la
+// source : les .jpg servis font 320 px de large pour du 1080x1920
+// (portrait). C'est un plafond, pas une consigne — la taille reelle est
+// calculee dans dessineBandeau d'apres la place laissee par la mise en
+// page. Depasser ce plafond ne ferait qu'agrandir une image de 320 px.
+const VIGNETTE_L = 320;
+const VIGNETTE_H = Math.round(VIGNETTE_L * 1920 / 1080);   // ~569 px
+
+const elBandeau = document.getElementById("bandeau");
+const elTimeline = document.getElementById("timeline");
+const elStatut = document.getElementById("statut");
+const elInfos = document.getElementById("infos");
+const elFiltreRetenues = document.getElementById("chk-filtre-retenues");
+const elFiltreNonRetenues = document.getElementById("chk-filtre-non-retenues");
+const elFiltreModifiees = document.getElementById("chk-filtre-modifiees");
+
+// Reaction commune aux trois cases de filtre (clic souris ou raccourci
+// clavier r/e/m, qui basculent .checked puis appellent ceci) : un seul
+// chemin de decision, quelle que soit la case qui vient de changer.
+function onFiltreChange(el) {
+  if (el.checked && indicesSelectionnes().length === 0) {
+    // Cette combinaison de filtres ne selectionne plus aucune frame : on
+    // n'engage pas ce changement, on l'annule et on previent l'utilisateur
+    // plutot que de le laisser sans rien a parcourir (cas limite "selection
+    // vide" de la spec : on garde l'etat precedent).
+    el.checked = false;
+    signaleErreur("erreur_filtre_vide");
+    return;
+  }
+  effaceErreur();
+  if (el.checked) {
+    // Engager un filtre saute vers la selection la plus proche (voir
+    // cibleActivationFiltre) plutot que de laisser la position courante
+    // hors de ce qui est maintenant montre.
+    vaVers(cibleActivationFiltre());
+  } else {
+    // On decoche : retour a une selection plus large, sans sauter, a la
+    // frame courante.
+    dessine();
+  }
+}
+elFiltreRetenues.addEventListener("change", () => onFiltreChange(elFiltreRetenues));
+elFiltreNonRetenues.addEventListener("change", () => onFiltreChange(elFiltreNonRetenues));
+elFiltreModifiees.addEventListener("change", () => onFiltreChange(elFiltreModifiees));
+
+// Redimensionne le canvas timeline a sa largeur reelle. Il est cache tant
+// que la source n'est pas prete (voir .pas-pret) : sa largeur vaut alors 0,
+// d'ou le repli. Ce repli est #etat, le seul voisin de meme largeur qui
+// reste dans le flux dans tous les cas — et non la largeur de la fenetre,
+// qui compte en plus le rail depuis la mise en page en deux colonnes.
+function ajusteTimeline() {
+  elTimeline.width = elTimeline.clientWidth
+    || document.getElementById("etat").clientWidth || window.innerWidth;
+}
+window.addEventListener("resize", () => { ajusteTimeline(); dessine(); });
+
+// La pellicule occupe la hauteur qui RESTE : cette hauteur change sans que
+// la fenetre bouge — un bandeau d'erreur qui s'ouvre, la barre d'avancement
+// d'une tache qui demarre, le compte-rendu qui s'affiche a la fin. Sans cette
+// observation, les vignettes gardaient la taille calculee pour l'ancienne
+// hauteur et se faisaient couper en bas, ce que la page ne peut pas rattraper
+// en defilant puisqu'elle ne defile pas. L'observateur ne peut pas boucler :
+// #bandeau est une rangee de grille a taille imposee qui masque son
+// debordement, redimensionner ses enfants ne le redimensionne pas.
+new ResizeObserver(() => dessineBandeau()).observe(elBandeau);
+
+// Un clic sur la timeline deplace la position a la frame correspondante.
+// La timeline ne dessinant que la selection (voir dessineTimeline), le clic
+// vise un index dans CETTE liste, pas un fraction de la sequence entiere.
+elTimeline.addEventListener("click", (e) => {
+  const r = elTimeline.getBoundingClientRect();
+  const frac = (e.clientX - r.left) / r.width;
+  const sel = indicesSelectionnes();
+  if (sel.length === 0) return; // rien affiche, rien a viser
+  const i = Math.max(0, Math.min(sel.length - 1, Math.round(frac * (sel.length - 1))));
+  vaVers(sel[i]);
+});
+
+document.getElementById("btn-lecture").addEventListener("click", () => lecture(!etat.lecture));
+document.getElementById("btn-stop").addEventListener("click", () => { lecture(false); vaVers(0); });
+document.getElementById("btn-prec").addEventListener("click", () => pasSelection(-1));
+document.getElementById("btn-suiv").addEventListener("click", () => pasSelection(+1));
+elStatut.addEventListener("click", () => bascule());
+
+// Reconstruit le bandeau de vignettes autour de etat.pos, sur 2*rayon+1
+// cases (la centrale en taille pleine, les voisines reduites a 55 % et
+// attenuees). Les <img> viennent du cache partage (vignette()) : jamais
+// de creation en dehors de cette fonction et de precharge().
+//
+// La taille de la vignette centrale est MESUREE et non fixee : la page ne
+// defile pas (voir la coquille en grille dans la feuille de style), donc
+// c'est la place restante qui commande. Une hauteur fixe de 569 px, comme
+// avant, imposait sa loi a la page et la faisait deborder des que la
+// fenetre etait un peu basse.
+function dessineBandeau() {
+  elBandeau.innerHTML = "";
+  const rayon = etat.rayon;
+  // Deux bornes, plus le plafond de la taille reelle du .jpg :
+  //   - la HAUTEUR laissee au bandeau par la grille ;
+  //   - la LARGEUR de la rangee entiere, gouttieres comprises, pour que les
+  //     vignettes de bord ne soient plus coupees par le cadre, a n'importe
+  //     quel zoom (touches + / -). C'etait un defaut signale a l'usage.
+  // Le padding et la gouttiere sont LUS sur la feuille et non recopies ici :
+  // les changer dans le CSS suffit, le calcul suit.
+  const styleBandeau = getComputedStyle(elBandeau);
+  const marge = 2 * (parseFloat(styleBandeau.paddingTop) || 0);
+  const gouttiere = parseFloat(styleBandeau.columnGap) || 0;
+  const hDispo = elBandeau.clientHeight - marge;
+  const lDispo = elBandeau.clientWidth - marge - 2 * rayon * gouttiere;
+  // Largeur totale de la rangee = L * (1 + 2 * rayon * 0,55).
+  const parLargeur = lDispo / (1 + 1.1 * rayon);
+  const parHauteur = hDispo * VIGNETTE_L / VIGNETTE_H;
+  // Le plancher a 40 px couvre le seul cas ou les mesures ne veulent rien
+  // dire : bandeau encore cache (source pas prete), donc clientHeight nul.
+  const baseL = Math.max(40, Math.min(VIGNETTE_L, parLargeur, parHauteur));
+  const baseH = baseL * VIGNETTE_H / VIGNETTE_L;
+  for (let d = -rayon; d <= rayon; d++) {
+    // Le centre reste toujours etat.pos, meme hors selection (voir le cas k
+    // dans bascule()). Les voisins, eux, sont les frames voisines dans la
+    // SELECTION courante, pas les voisines temporelles : quand aucun filtre
+    // n'est actif la selection est la sequence entiere et kEmeSelection se
+    // comporte donc comme un simple +d/-d d'antan.
+    const n = (d === 0) ? etat.pos : kEmeSelection(etat.pos, d > 0 ? 1 : -1, Math.abs(d));
+    const boite = document.createElement("div");
+    boite.className = "vignette-boite";
+    const estCentre = d === 0;
+    const taille = estCentre ? 1 : 0.55;
+    boite.style.width = `${Math.round(baseL * taille)}px`;
+    boite.style.height = `${Math.round(baseH * taille)}px`;
+    if (!estCentre) boite.style.opacity = "0.55";
+    if (estCentre) boite.classList.add("centre");
+
+    // n peut valoir null (kEmeSelection a atteint une borne sans trouver de
+    // voisine selectionnee) : la comparaison numerique null >= 0 vaut true
+    // en JS, d'ou le test d'egalite explicite ci-dessous.
+    if (n !== null && n >= 0 && n < etat.frames.length) {
+      const f = etat.frames[n];
+      const rejetee = !conservee(f);
+      // Cadre colore selon l'etat effectif (voir conservee()) : vert si
+      // gardee, rouge si ecartee, en plus de la mise en valeur du centre.
+      boite.classList.add(rejetee ? "rejetee" : "conservee");
+      // Le bleu (modification utilisateur) l'emporte sur le vert/rouge :
+      // s'ajoute en plus, la regle CSS .modifiee gagne la cascade.
+      if (modifiee(f)) boite.classList.add("modifiee");
+
+      const img = vignette(n);
+      // Une meme <img> (partagee via le cache) peut se retrouver
+      // referencee ici puis ailleurs : cloneNode evite de la deplacer
+      // hors de son <div> precedent quand le bandeau est reconstruit.
+      boite.appendChild(img.cloneNode());
+
+      const etiquette = document.createElement("div");
+      etiquette.className = "etiquette";
+      // Numerotation 1-based ICI comme dans #infos : les deux nomment la
+      // meme frame a l'utilisateur et ne doivent pas la nommer autrement.
+      // n reste l'index 0-based partout ailleurs (vignette(n), /thumb/n.jpg,
+      // /api/decision) — seul l'affichage decale.
+      etiquette.appendChild(document.createTextNode(String(n + 1)));
+      if (rejetee && f.verdict) {
+        etiquette.appendChild(document.createTextNode(" "));
+        const motif = document.createElement("span");
+        motif.className = "motif";
+        // f.verdict est un code de protocole automatique (no_lock, too_dark,
+        // motion_blur, flare, hors_source, ilot), jamais traduit ni change :
+        // voir dessine() plus bas, meme cle composee de la meme facon, pour
+        // la meme raison. Il ne vaut jamais "manuel" ici : ce septieme code
+        // est ecrit par decisions.applique, appelee uniquement hors-ligne
+        // par pipeline.render -- jamais par le viewer, ou f.verdict vient
+        // directement de etat["verdicts"] (viewer.py), le resultat brut
+        // d'analyse_verdicts, sans jamais passer par applique().
+        const cle = "verdict_" + f.verdict;
+        motif.textContent = t(cle);
+        etiquette.appendChild(motif);
+      }
+      boite.appendChild(etiquette);
+    }
+    elBandeau.appendChild(boite);
+  }
+}
+
+function dessine() {
+  dessineBandeau();
+  dessineTimeline();
+
+  const f = etat.frames[etat.pos];
+  if (f) {
+    const ok = conservee(f);
+    // Texte d'etat : depend de l'etat courant, donc AUCUN data-t (voir
+    // rafraichitTextesDynamiques, qui rappelle dessine() a chaque
+    // changement de langue). className, lui, reste un code CSS ("conservee"
+    // / "ecartee") non traduit -- rien a voir avec le texte affiche.
+    // Le ternaire choisit entre DEUX appels a t() entierement litteraux,
+    // et non t(ok ? "etat_conservee" : "etat_ecartee") : la cle serait
+    // alors un ternaire, pas une chaine, et invisible a _cles_employees
+    // (tests/test_langues.py) -- les deux cles auraient du rejoindre
+    // _CLES_SERVEUR sans necessite, pour un simple choix binaire.
+    elStatut.textContent = ok ? t("etat_conservee") : t("etat_ecartee");
+    elStatut.className = ok ? "conservee" : "ecartee";
+    const total = etat.frames.length;
+    const rejetees = etat.frames.reduce((n, g) => n + (conservee(g) ? 0 : 1), 0);
+
+    // Une seule facon de numeroter une frame, dans les trois cas : le
+    // numero 1-based, sur le total. L'ancien affichage filtre en donnait
+    // DEUX pour la meme frame ("1 / 200 — frame 0"), l'un 1-based et
+    // l'autre 0-based, et les deux disaient largement la meme chose.
+    //
+    // 1-based a l'AFFICHAGE seulement : l'index reste 0-based partout
+    // ailleurs (etat.pos, /thumb/N.jpg, le n de /api/decision, le cache et
+    // le fichier de decisions cote serveur). Rien de ce qui traverse le
+    // reseau n'est renumerote.
+    //
+    // Le rang dans la selection s'ajoute quand un filtre est actif : c'est
+    // une AUTRE information (« la 12e des 228 retenues »), etiquetee comme
+    // telle, et non une seconde numerotation de la meme frame. rang vaut -1
+    // si etat.pos n'est pas dans la selection (arrive via un clic timeline,
+    // ou un k qui vient d'en sortir cette frame).
+    let entete = t("frame_position", { pos: etat.pos + 1, total });
+    const sel = filtreActif() ? indicesSelectionnes() : null;
+    // Et rien a ajouter quand la selection couvre toute la sequence
+    // (retenues + non-retenues cochees ensemble : voir dansSelection, ou ce
+    // cas est explicitement coherent) : le rang y vaut le numero de frame,
+    // et c'est justement ce doublon-la qui a ete signale a l'usage
+    // (« 1 / 200 — frame 0 »).
+    if (sel !== null && sel.length !== total) {
+      const rang = sel.indexOf(etat.pos);
+      entete += rang !== -1
+        ? t("selection_rang", { rang: rang + 1, total: sel.length })
+        : t("hors_selection");
+    }
+
+    // f.verdict et f.ecart_utilisateur sont des codes de protocole
+    // (no_lock, too_dark, motion_blur, flare, hors_source, ilot pour le
+    // premier ; conserver, ecarter pour le second) : ce sont des codes
+    // FERMES, contrairement a {detail} dans les cles tache_<genre>_echouee
+    // (voir afficheTache), qui porte un message d'exception a la forme
+    // ouverte. Un code ferme se traduit ; un message d'exception ne se
+    // traduit pas. La cle se COMPOSE avant l'appel a t(), jamais par
+    // concatenation ecrite a l'interieur des parentheses (voir libelleEtape,
+    // meme piege) ; verdict_no_lock, verdict_too_dark, verdict_motion_blur,
+    // verdict_flare, verdict_hors_source, verdict_ilot, statut_conserver et
+    // statut_ecarter sont dans _CLES_SERVEUR pour la meme raison.
+    //
+    // f.verdict ne porte PAS le septieme code, "manuel" (verdict_manuel
+    // existe dans les tables pour cette raison, sans jamais etre atteint
+    // ici) : ce code est ecrit par decisions.applique, appelee uniquement
+    // hors-ligne par pipeline.render pour composer le fichier de decisions
+    // et le rendu final. Le viewer ne l'appelle jamais -- f.verdict vient
+    // directement du resultat brut d'analyse_verdicts (etat["verdicts"],
+    // viewer.py), jamais superpose aux ecarts utilisateur. C'est d'ailleurs
+    // pourquoi libelleVerdict, juste en dessous, est toujours annonce comme
+    // "automatique" (voir t("verdict_automatique", ...) plus bas) : la page
+    // ne montre jamais qu'un verdict automatique, l'ecart manuel etant une
+    // information separee (f.ecart_utilisateur, libelleEcart).
+    let libelleVerdict = null;
+    if (f.verdict) {
+      const cleVerdict = "verdict_" + f.verdict;
+      libelleVerdict = t(cleVerdict);
+    }
+    let libelleEcart = null;
+    if (f.ecart_utilisateur) {
+      const cleEcart = "statut_" + f.ecart_utilisateur;
+      libelleEcart = t(cleEcart);
+    }
+    elInfos.textContent =
+      entete +
+      (libelleVerdict ? t("verdict_automatique", { verdict: libelleVerdict }) : "") +
+      (libelleEcart ? t("ecart_manuel", { ecart: libelleEcart }) : "") +
+      t("frames_ecartees_total", { n: rejetees });
+  }
+}
+
+ajusteTimeline();
+
+// -- Tache 6 : lancement des traitements (vignettes, analyse, rendu) depuis
+// la page, sondage de l'avancement, et rattachement a une tache deja en
+// cours (fermeture puis reouverture de l'onglet, ou un second onglet ouvert
+// pendant la tache). L'etat de la tache vit entierement cote serveur (voir
+// eclipse.taches.Moteur) : la page n'a qu'a le demander, rien a reconstruire
+// elle-meme.
+
+const elManquant = document.getElementById("manquant");
+const elListeManque = document.getElementById("liste-manque");
+const elActions = document.getElementById("actions");
+const elLancerVignettes = document.getElementById("lancer-vignettes");
+const elLancerAnalyse = document.getElementById("lancer-analyse");
+const elLancerRendu = document.getElementById("lancer-rendu");
+const elRenduPng = document.getElementById("rendu-png");
+const elAvancement = document.getElementById("avancement");
+const elAvancementGenre = document.getElementById("avancement-genre");
+const elBarre = document.getElementById("barre");
+const elAvancementCompte = document.getElementById("avancement-compte");
+const elAnnuler = document.getElementById("annuler");
+const elResultatTache = document.getElementById("resultat-tache");
+const elSansSource = document.getElementById("sans-source");
+const elManquePrete = document.getElementById("manque-prete");
+const elSourceCourante = document.getElementById("source-courante");
+const elChoisirSource = document.getElementById("choisir-source");
+const elSourceMessage = document.getElementById("source-message");
+
+// Les trois etapes, dans l'ordre du bandeau, et le bouton de chacune.
+const NOMS_ETAPES = ["vignettes", "analyse", "rendu"];
+const BOUTONS_ETAPES = {
+  vignettes: elLancerVignettes,
+  analyse: elLancerAnalyse,
+  rendu: elLancerRendu,
+};
+const ETAT_CLASSES = ["indisponible", "disponible", "faite", "a-refaire",
+                      "en-cours"];
+
+// La cle de traduction du ::after de chaque etat (voir la feuille de style,
+// #actions button.*::after) -- indexee par la MEME classe CSS que
+// ETAT_CLASSES, posee par majZoneLancement au meme endroit que la classe.
+// "disponible" est ABSENT expres : sa regle CSS n'a pas de ::after, et
+// LIBELLES_ETAT[classe] indefini pour elle est ce qui fait poser une chaine
+// vide plutot qu'une traduction sans regle pour l'afficher.
+// Cle composee : LIBELLES_ETAT[classe] n'est pas un litteral passe a t(),
+// invisible a _cles_employees (tests/test_langues.py) -- les quatre cles
+// vivent dans _CLES_SERVEUR pour ne pas etre signalees comme du texte mort.
+const LIBELLES_ETAT = {
+  faite: "etat_deja_fait", "a-refaire": "etat_a_refaire",
+  indisponible: "etat_indisponible", "en-cours": "etat_en_cours",
+};
+
+// L'etat de chaque etape TEL QUE LE SERVEUR LE DIT (voir etapes.etats). Il
+// est deduit du disque a chaque requete, jamais stocke, et il ne vaut
+// JAMAIS "en_cours" : ca, c'est le moteur de taches qui le sait, et la page
+// le superpose via genreEnCours sans jamais ecraser ce qui suit. Garder les
+// deux separes est ce qui fait que les deux grisages se composent (voir
+// majZoneLancement).
+let etatsEtapes = { vignettes: "indisponible", analyse: "indisponible",
+                    rendu: "indisponible" };
+
+// Le genre de la tache qui tourne, ou null. Superpose, jamais substitue.
+let genreEnCours = null;
+
+// Le chemin de la source courante, ou null quand le viewer est ouvert sur
+// rien. Lu par afficheSource et par demarre.
+let sourceCourante = null;
+
+// Vrai des que chargeFrames a rendu une premiere reponse. Lu par
+// rafraichitTextesDynamiques : chargeLangues tourne AVANT chargeFrames dans
+// demarre, et un changement de langue peut donc survenir alors qu'aucune
+// reponse d'/api/frames n'est encore arrivee. Rappeler regleEtape a ce
+// moment-la ferait bouton.hidden = false et montrerait les trois boutons
+// d'etape avant l'heure -- exactement le trou que le commentaire pres de
+// #actions decrit pour /api/frames elle-meme.
+let framesChargees = false;
+
+// Un bouton par etape amont, deux libelles : « Extraire » / « Analyser »
+// quand l'etape manque, « Refaire ... » quand elle est faite. Les deux
+// boutons sont desormais TOUJOURS montres — c'etait le trou : ils vivaient
+// dans #manquant, qui disparait des que la source est prete, et une analyse
+// une fois passee n'etait donc plus relancable autrement qu'en tuant le
+// serveur pour repasser par la ligne de commande.
+//
+// Le numero d'etape fait partie du libelle (« 1. ... », « 2. ... », et
+// « 3. ... » ecrit dans le HTML) : c'est lui qui dit que les trois boutons
+// sont une chaine, dans l'ordre. La feuille de style le grossit via
+// ::first-letter — le retirer du texte retirerait le rang, pas seulement un
+// ornement.
+//
+// dataset.refaire porte l'etat pour le gestionnaire de clic : c'est lui qui
+// decide de demander confirmation, pas le libelle.
+//
+// Deux libelles par etape : celui de l'etape jamais lancee, et celui de
+// l'etape qui a deja tourne. C'est l'ETAT SERVEUR qui tranche desormais, et
+// non la liste "manque" : elle ne dit rien du rendu, et rien non plus d'une
+// sortie perimee.
+const LIBELLES_ETAPES = {
+  vignettes: ["bouton_vignettes", "bouton_vignettes_refaire"],
+  analyse: ["bouton_analyse", "bouton_analyse_refaire"],
+  rendu: ["bouton_rendu", "bouton_rendu_refaire"],
+};
+
+function regleEtape(nom) {
+  const bouton = BOUTONS_ETAPES[nom];
+  const etatDisque = etatsEtapes[nom];
+  const deja = etatDisque === "faite" || etatDisque === "a_refaire";
+  bouton.hidden = false;
+  // LIBELLES_ETAPES[nom][...] n'est pas un litteral : invisible a
+  // _cles_employees (tests/test_langues.py). Les six cles vivent dans
+  // _CLES_SERVEUR pour ne pas etre signalees comme du texte mort.
+  bouton.textContent = t(LIBELLES_ETAPES[nom][deja ? 1 : 0]);
+  bouton.dataset.refaire = deja ? "1" : "";
+}
+
+// Traduit un code d'etape protocolaire (vignettes/analyse/rendu) en son
+// libelle humain, pour la barre d'avancement (elAvancementGenre) et la liste
+// de ce qui manque (elListeManque). La cle se COMPOSE avant l'appel a t(),
+// dans la variable cle ci-dessous, et jamais par concatenation ecrite a
+// l'interieur des parentheses de l'appel : une telle ecriture mettrait,
+// litteralement dans ce fichier, un fragment de nom de cle entre guillemets
+// juste apres l'appel -- exactement ce que _cles_employees (voir
+// tests/test_langues.py) recherche, et qui le ferait prendre pour une cle a
+// part entiere absente des tables. Meme piege que pour LIBELLES_ETAPES et
+// les neuf cles d'issue de tache (voir afficheTache). Les trois cles sont
+// dans _CLES_SERVEUR pour la meme raison.
+function libelleEtape(nom) {
+  const cle = "etape_" + nom;
+  return t(cle);
+}
+
+// Le nom de la source dans le rail, le chemin complet en infobulle : le
+// rail fait 268 px, un chemin absolu n'y tient pas.
+function afficheSource(chemin) {
+  const vide = chemin === null || chemin === undefined;
+  elSourceCourante.classList.toggle("vide", vide);
+  // t("source_aucune") ici et non un data-t sur l'element : ce texte
+  // alterne avec le nom de fichier, que data-t ne sait pas rendre.
+  elSourceCourante.textContent = vide ? t("source_aucune")
+                                      : nomDeFichier(chemin);
+  elSourceCourante.title = vide ? t("source_aucune") : chemin;
+}
+
+// Dernier segment d'un chemin. Les chemins viennent du systeme HOTE, avec
+// des contre-obliques sous Windows et des obliques ailleurs : on coupe sur
+// les deux plutot que d'en supposer un.
+function nomDeFichier(chemin) {
+  const bouts = chemin.split(/[\\/]/);
+  return bouts[bouts.length - 1] || chemin;
+}
+
+// Charge /api/frames et affiche soit la pellicule (etat pret), soit le
+// panneau nommant ce qui manque avec un bouton par element manquant. C'est
+// ICI que le trou historique se refermait (voir le commentaire plus haut) :
+// rien ne touche etat.frames avant d'avoir verifie d.pret.
+async function chargeFrames() {
+  let d;
+  try {
+    d = await litJSON("/api/frames");
+  } catch (e) {
+    return signaleServeurInjoignable();
+  }
+  // TROIS formes de reponse, et non deux : « pas de source du tout »,
+  // « source pas prete », « source prete ». La premiere est celle que
+  // recoit un viewer lance sans argument, et la page doit la dire pour ce
+  // qu'elle est.
+  sourceCourante = (d.source === undefined) ? null : d.source;
+  afficheSource(sourceCourante);
+  document.body.classList.toggle("pas-pret", !d.pret);
+  elManquant.hidden = d.pret;
+  elSansSource.hidden = sourceCourante !== null;
+  elManquePrete.hidden = sourceCourante === null;
+  // Retenu pour rafraichitTextesDynamiques (voir derniereManque) : un
+  // changement de langue doit pouvoir repeindre cette liste sans
+  // reinterroger le serveur, exactement comme derniereTache pour
+  // afficheTache.
+  derniereManque = (!d.pret && sourceCourante !== null) ? d.manque : null;
+  if (derniereManque)
+    elListeManque.textContent = derniereManque.map(libelleEtape).join(", ");
+  // L'etat des trois etapes vient du serveur, qui l'envoie sur les TROIS
+  // formes. Object.assign par-dessus les trois valeurs par defaut : une
+  // reponse amputee laisse l'etape indisponible plutot qu'undefined, dont
+  // majZoneLancement ferait une classe CSS "undefined".
+  etatsEtapes = Object.assign(
+    { vignettes: "indisponible", analyse: "indisponible",
+      rendu: "indisponible" }, d.etapes);
+  // Le serveur envoie `divergentes` sur les trois formes de la reponse. Le
+  // repli sur [] n'est pas decoratif : sans lui, une reponse amputee
+  // laisserait en place les ecarts de la source PRECEDENTE, peints sur la
+  // timeline de la nouvelle.
+  divergentes = new Set(d.divergentes || []);
+  for (const nom of NOMS_ETAPES) regleEtape(nom);
+  // La case PNG est l'option de l'etape 3 : elle suit la disponibilite de
+  // CETTE etape, et non « la source est prete ». Un cache d'analyse sans
+  // vignettes rend le rendu possible — il lit le cache, pas les .jpg — et
+  // la source n'est pourtant pas prete.
+  elRenduPng.parentElement.hidden = etatsEtapes.rendu === "indisponible";
+  if (d.pret) {
+    etat.frames = d.frames; etat.fps = d.fps;
+    vaVers(0);
+  }
+  // HORS du bloc « pret », et c'est tout l'interet. Le serveur envoie
+  // `avertissement` sur les DEUX formes de la reponse, et celui qui compte le
+  // plus arrive justement sur la forme NON prete : quand on choisit une source
+  // dans la page, elle n'a ni cache ni vignettes, et c'est la que le serveur
+  // signale que le tri de la ligne de commande n'est plus lu (voir
+  // viewer._tri_orpheline). Range a l'interieur du if, comme il l'a ete, cet
+  // avertissement-la etait INERTE : l'operateur qui revenait a sa source
+  // voyait « Extraire les images » et pas un mot sur ses 228 decisions
+  // devenues invisibles. L'autre origine, un fichier de decisions present
+  // mais refuse (voir decisions.diagnostique), doit se dire tout autant.
+  if (d.avertissement) signaleErreur(d.avertissement);
+  // Et il S'ETEINT quand il ne vaut plus. Sans ce sinon, l'avertissement de
+  // la source A resterait affiche apres qu'on a bascule sur la source B, qui
+  // n'en a aucun : chargeFrames est justement ce qui suit un changement de
+  // source (voir choisitSource) et la fin d'une tache.
+  else effaceErreur();
+  // Toujours en dernier : chargeFrames vient de rendre des boutons visibles,
+  // et une tache peut tourner pendant ce temps (rattachement au chargement,
+  // ou fin de tache qui recharge). C'est ici que l'etat actif / eteint de la
+  // zone est reapplique.
+  majZoneLancement();
+  // Posee en dernier : c'est le signal, pour rafraichitTextesDynamiques, que
+  // regleEtape peut desormais etre rappelee sans montrer les boutons avant
+  // l'heure (voir le commentaire pres de la declaration).
+  framesChargees = true;
+}
+
+// Les etats d'etape ET les ecarts avec le rendu, sans toucher ni a la
+// pellicule ni a la position courante. Appelee apres une decision : c'est le
+// seul geste, hors tache, qui puisse changer l'un ou l'autre.
+//
+// LE GARDE-FOU EST LA CONDITION D'APPEL, pas l'appel : une decision ne peut
+// changer que la peremption du rendu (voir etapes.etats — perime_rendu n'est
+// consulte que dans la branche « le rendu existe »). Sans rendu sur le
+// disque, l'etape 3 vaut « disponible » ou « indisponible » quoi qu'on
+// decide, et les deux premieres ne dependent pas du tri du tout. On evite
+// ainsi une requete par touche k pendant la premiere passe de revue, qui en
+// compte des centaines.
+//
+// La meme condition vaut mot pour mot pour le lisere : le serveur ne rend
+// des divergences que pour un rendu PRESENT sur le disque (voir
+// _etapes_courantes). Rien a rafraichir dans les cas ecartes ici.
+async function rafraichitEtapes() {
+  if (etatsEtapes.rendu !== "faite" && etatsEtapes.rendu !== "a_refaire")
+    return;
+  let d;
+  try {
+    d = await litJSON("/api/frames");
+  } catch (e) {
+    // Silencieux : bascule() a deja son propre traitement d'erreur, et la
+    // decision, elle, est bien enregistree. Le bandeau se remettra a jour au
+    // prochain rechargement.
+    return;
+  }
+  etatsEtapes = Object.assign(
+    { vignettes: "indisponible", analyse: "indisponible",
+      rendu: "indisponible" }, d.etapes);
+  // LES ECARTS AUSSI, et c'est le meme geste que le bandeau : la decision
+  // qui vient de faire passer l'etape 3 en « a refaire » est exactement
+  // celle qui ajoute (ou retire) une frame divergente. Les mettre a jour
+  // ici, sans toucher a etat.frames ni a etat.pos, est ce qui fait que la
+  // marque apparait sous la touche k plutot qu'au prochain rechargement.
+  divergentes = new Set(d.divergentes || []);
+  for (const nom of NOMS_ETAPES) regleEtape(nom);
+  // La timeline peint le lisere depuis cet ensemble : sans ce redessin, il
+  // ne changerait qu'a la prochaine navigation.
+  dessineTimeline();
+  majZoneLancement();
+}
+
+// Vrai tant qu'une tache tourne cote serveur. Lu par majZoneLancement.
+let tacheEnCours = false;
+
+// Le dernier instantane recu de /api/tache, ou null si aucune tache n'a
+// jamais tourne. Retenu par afficheTache, relu par rafraichitTextesDynamiques
+// pour repeindre le resultat de la derniere tache -- boutons, avancement ou
+// compte-rendu -- dans la nouvelle langue, sans reinterroger le serveur.
+let derniereTache = null;
+
+// Le dernier tableau `manque` recu de /api/frames (etapes qui restent a
+// faire), ou null quand la source est prete ou absente. Meme role que
+// derniereTache juste au-dessus, pour #liste-manque -- voir chargeFrames et
+// rafraichitTextesDynamiques.
+let derniereManque = null;
+
+// Le dernier message signale par signaleErreur, ou null si le bandeau est
+// vide. Une CLE (ou la liste de faits que le serveur envoie), jamais du
+// texte deja traduit : voir signaleErreur, qui traduit elle-meme, et
+// rafraichitTextesDynamiques, qui rejoue cette valeur pour repeindre le
+// bandeau -- l'avertissement de tri orphelin y compris -- dans la nouvelle
+// langue sans reinterroger le serveur.
+let derniereErreur = null;
+
+// Le dernier message du panneau de source, ou null si rien n'est affiche.
+// {recette, refus} : `recette` est une fonction qui recalcule le texte (pas
+// le texte lui-meme, deja traduit) pour que rafraichitTextesDynamiques
+// puisse la rejouer dans la nouvelle langue -- voir messageSource.
+let derniereMessageSource = null;
+
+// DEUX mecanismes de grisage, distincts, et c'est ICI — en un seul
+// endroit — qu'ils se COMPOSENT :
+//
+//   - la tache en cours. Une seule tache a la fois cote serveur (voir
+//     eclipse.taches) : pendant qu'elle tourne, un clic sur un bouton de
+//     lancement ne peut que se faire refuser (409). Transitoire.
+//   - l'indisponibilite. L'etape ne peut pas encore tourner : pas de source
+//     du tout, ou l'etape amont n'a jamais ete faite. C'est un fait deduit
+//     du disque, il ne bouge pas parce qu'une tache s'acheve.
+//
+// Les confondre serait le defaut naturel de cette page. Si « en_cours »
+// ecrasait etatsEtapes, ou si un seul drapeau portait les deux raisons, la
+// fin d'une tache rendrait DISPONIBLE une etape qui ne l'est pas — elle
+// s'allumerait simplement parce que le grisage de la tache vient de se
+// lever. D'ou la separation etatsEtapes / genreEnCours, et d'ou le OU
+// logique ci-dessous.
+//
+// Annuler n'est concerne par aucun des deux : il vit dans #avancement.
+function majZoneLancement() {
+  elActions.classList.toggle("occupe", tacheEnCours);
+  for (const nom of NOMS_ETAPES) {
+    const bouton = BOUTONS_ETAPES[nom];
+    const etatDisque = etatsEtapes[nom];
+    bouton.disabled = tacheEnCours || etatDisque === "indisponible";
+    // « en cours » se SUPERPOSE : il change ce qui est peint, jamais ce qui
+    // est retenu. Les etats du serveur arrivent avec des soulignes
+    // (a_refaire), les classes CSS avec des tirets : une seule traduction,
+    // et elle est ici.
+    const peint = (genreEnCours === nom) ? "en_cours" : etatDisque;
+    const classe = peint.replace("_", "-");
+    bouton.classList.remove(...ETAT_CLASSES);
+    bouton.classList.add(classe);
+    // Meme endroit que la classe : c'est elle qui decide quelle regle
+    // ::after s'applique, et donc quelle traduction s'affiche. Chaine vide
+    // pour "disponible" (LIBELLES_ETAT[classe] indefini), qui n'a pas de
+    // ::after -- voir LIBELLES_ETAT plus haut.
+    bouton.dataset.libelleEtat = LIBELLES_ETAT[classe] ? t(LIBELLES_ETAT[classe]) : "";
+  }
+  // L'option de l'etape 3 suit l'etape 3, pour les deux raisons a la fois.
+  elRenduPng.disabled = tacheEnCours || etatsEtapes.rendu === "indisponible";
+  // Changer de source pendant une tache est refuse par le serveur (409, voir
+  // _change_source) : on eteint le bouton plutot que de laisser cliquer dans
+  // un refus.
+  //
+  // boiteOuverte s'y AJOUTE, et ce n'est pas une precaution en trop : cette
+  // fonction est rappelee a la fin de chaque tache et a chaque chargement
+  // des frames, evenements qui surviennent pendant que la boite du systeme
+  // est ouverte, et qui rallumeraient sinon un bouton dont un second clic
+  // partirait en 409.
+  elChoisirSource.disabled = tacheEnCours || boiteOuverte;
+  // Depend de l'etat courant, donc AUCUN data-t-title : rappelee par
+  // rafraichitTextesDynamiques via majZoneLancement elle-meme.
+  elActions.title = tacheEnCours ? t("infobulle_tache_en_cours") : "";
+}
+
+// Rappelee par appliqueLangue (voir le premier bloc de script) apres CHAQUE
+// application de la langue, chargement initial compris. Les textes que la
+// boucle [data-t] ne peut pas toucher parce qu'un autre mecanisme les ecrit
+// par-dessus doivent etre regeneres ici :
+//   - les trois boutons d'etape (LIBELLES_ETAPES, voir regleEtape) ;
+//   - la zone de lancement, dont les classes suivent l'etat courant ;
+//   - la bascule de theme, qui porte l'etat courant dans son propre texte
+//     (voir window.rafraichitTheme, pose par le bloc de script de fin) ;
+//   - #source-courante, qui alterne entre "Chargement...", le nom de
+//     fichier et "Aucune source choisie" (voir afficheSource) ;
+//   - la legende de la frame courante (#statut, #infos), calculee par
+//     dessine() -- appelee seulement si la pellicule est deja chargee, sans
+//     quoi etat.frames[etat.pos] n'existe pas encore ;
+//   - le resultat de la derniere tache connue (avancement ou compte-rendu),
+//     RECALCULE via afficheTache(derniereTache) et non traduit sur place :
+//     on ne sait pas defaire une phrase pour la refaire dans une autre
+//     langue (voir texteComptes, qui compose quatre sous-cles a pluriel
+//     independant -- compte_frames_total/rendues/interpolees/ecartees --
+//     avant de les passer a comptes_sortie, lui-meme un gabarit fixe sans
+//     pluriel propre).
+// framesChargees tranche entre AVANT et APRES la premiere reponse
+// d'/api/frames, pour ces deux derniers points : rappeler regleEtape avant
+// afficherait les trois boutons avant l'heure (bouton.hidden = false, voir
+// le commentaire pres de #actions) ; rappeler afficheSource(sourceCourante)
+// avant, alors que sourceCourante vaut encore sa valeur initiale (null),
+// ecrirait "Aucune source choisie" a la place d'un "Chargement..." qui
+// serait reste vrai -- le trou que l'ETAPE 0 a deja referme une fois (voir
+// le commentaire pres de #panneau-source). Tant que chargeFrames n'a pas
+// tranche, source_chargement est donc pose directement, sans passer par
+// afficheSource.
+function rafraichitTextesDynamiques() {
+  if (framesChargees) {
+    for (const nom of NOMS_ETAPES) regleEtape(nom);
+    afficheSource(sourceCourante);
+  } else {
+    elSourceCourante.textContent = t("source_chargement");
+  }
+  // Sans etat.frames.length, dessine() lirait etat.frames[etat.pos] sur une
+  // pellicule vide -- rien a repeindre avant le premier chargement.
+  if (etat.frames.length) dessine();
+  // Repeint l'avancement ou le compte-rendu en cours, avec les MEMES
+  // chiffres deja recus (afficheTache ne redemande rien au serveur) : une
+  // tache en cours ne se fige ni ne repart de zero quand on change de
+  // langue, elle continue d'etre repeinte par le prochain sondage. `true` :
+  // ce rappel ne doit PAS re-cocher la case PNG depuis tache.options -- voir
+  // afficheTache, ou seul un instantane FRAIS du moteur a le droit de le
+  // faire (l'utilisateur peut avoir decoche la case pour le prochain rendu
+  // entre deux changements de langue).
+  if (derniereTache) afficheTache(derniereTache, true);
+  // La liste de ce qui manque (etape par etape) est composee une fois par
+  // chargeFrames et jamais retouchee ensuite : sans ce rappel, un changement
+  // de langue apres l'ouverture d'une source pas prete laisse cette phrase
+  // dans l'ancienne langue, cote a cote avec #manque-prete qui, lui, porte
+  // un data-t et suit.
+  if (derniereManque) elListeManque.textContent = derniereManque.map(libelleEtape).join(", ");
+  // Le bandeau d'erreur et le message du panneau de source portent tous deux
+  // des textes composes une fois (signaleErreur, messageSource) et jamais
+  // repeints depuis : sans ces deux rappels, l'avertissement de tri
+  // orphelin -- celui qui protege les decisions -- resterait dans l'ancienne
+  // langue apres une bascule, exactement comme la liste ci-dessus.
+  if (derniereErreur) signaleErreur(derniereErreur);
+  if (derniereMessageSource) messageSource(derniereMessageSource.recette,
+                                           derniereMessageSource.refus);
+  majZoneLancement();
+  if (typeof window.rafraichitTheme === "function") window.rafraichitTheme();
+  if (typeof window.rafraichitLangue === "function") window.rafraichitLangue();
+}
+
+// Parametre nomme `tache`, pas `t` : voir afficheTache plus haut, meme
+// convention pour la meme raison (t est la fonction de traduction).
+function pourcentage(tache) {
+  // Plafonne a 100 : le total des vignettes et de l'analyse est estime a
+  // partir de la duree et de la cadence, et peut etre depasse d'une unite.
+  if (!tache.total) return 0;
+  return Math.min(100, Math.round(100 * tache.fait / tache.total));
+}
+
+// Ce que le rendu a produit, dit la ou l'utilisateur regarde. Le terminal
+// l'annonce depuis toujours ("Ecrit N frames ... (M interpolees)"), la page
+// ne disait que « rendu : termine. » — d'ou la surprise de trouver 200 PNG
+// apres avoir ecarte 4 frames sur 200. Les coupes plus courtes que interp_max
+// sont comblees par interpolation, et ces frames-la comptent dans la sortie.
+// Rend "" pour les genres qui ne rapportent rien (vignettes, analyse).
+function texteComptes(r) {
+  if (!r) return "";
+  // Quatre comptes INDEPENDANTS, chacun accorde avec lui-meme -- et non un
+  // pluriel unique choisi sur le total puis applique aux quatre, defaut
+  // signale a la revue : avec 200 frames dont 1 seule ecartee, cela rendait
+  // « 1 frames ecartees ». Chaque fragment se traduit et se pluralise pour
+  // son propre compte (compte_frames_*), puis comptes_sortie les assemble
+  // dans une phrase FIXE (plus de pluriel a son niveau) qui garde la
+  // precision fonctionnelle de la phrase d'origine -- ne pas la simplifier
+  // pour esquiver l'accord (voir le commentaire qui la precede plus bas).
+  return " " + t("comptes_sortie", {
+    total: t("compte_frames_total", { n: r.total }),
+    ecrites: t("compte_frames_rendues", { n: r.ecrites }),
+    interpolees: t("compte_frames_interpolees", { n: r.interpolees }),
+    ecartees: t("compte_frames_ecartees", { n: r.ecartees }),
+  });
+}
+
+// Remplit la barre pendant la tache, et le resultat a la fin. tache.message
+// est montre sur un echec ; tache.avertissement s'ajoute dans tous les cas de
+// fin (y compris "terminee") : c'est ainsi que l'utilisateur apprend qu'un
+// rendu a reussi mais que l'etat du viewer n'a pas pu etre recharge (voir
+// taches.Moteur._enveloppe).
+//
+// Parametre nomme `tache`, et non `t` comme avant : `t` est la fonction de
+// traduction declaree plus haut, et un parametre du meme nom l'aurait
+// masquee pour toute la duree de cette fonction -- silencieusement, jusqu'au
+// premier appel a t(...) ici-dedans, qui aurait tente d'invoquer l'objet
+// tache comme une fonction.
+//
+// `repeint` (false par defaut) distingue un instantane FRAIS du moteur d'un
+// simple repeint de langue (voir rafraichitTextesDynamiques, qui rappelle
+// afficheTache(derniereTache, true) avec le MEME instantane qu'avant). Sans
+// cette distinction, changer de langue pendant qu'un rendu tourne re-coche
+// la case PNG depuis tache.options -- un reglage de l'utilisateur ecrase par
+// un changement de langue, alors que rien de neuf n'est arrive du serveur.
+function afficheTache(tache, repeint) {
+  // Retenue pour rafraichitTextesDynamiques : un changement de langue doit
+  // pouvoir repeindre le dernier resultat connu sans reinterroger le
+  // serveur (voir plus bas).
+  derniereTache = tache;
+  // L'instantane du moteur est le SEUL etat partage entre onglets : c'est
+  // donc lui, et rien d'autre, qui peut rendre a un onglet ouvert en cours
+  // de rendu la case « exporter aussi la sequence PNG » telle qu'elle a ete
+  // cochee dans l'onglet qui a lance (voir viewer._lance_tache). PAS sur un
+  // simple repeint (voir plus haut) : la case suit alors le choix courant de
+  // l'utilisateur, jamais un instantane deja vu.
+  if (!repeint && tache.genre === "rendu" && tache.options)
+    elRenduPng.checked = !!tache.options.png;
+  tacheEnCours = tache.etat === "en_cours";
+  // Le genre qui tourne, pour que le bouton de CETTE etape-la porte « en
+  // cours ». Remis a null des que la tache s'acheve : l'etape retrouve
+  // alors son etat disque, qui n'a jamais ete perdu — etatsEtapes n'a pas
+  // ete touche (voir majZoneLancement).
+  genreEnCours = tacheEnCours ? tache.genre : null;
+  majZoneLancement();
+  if (tacheEnCours) {
+    elAvancement.hidden = false;
+    elResultatTache.hidden = true;
+    elAvancementGenre.textContent = libelleEtape(tache.genre);
+    elBarre.value = pourcentage(tache);
+    elAvancementCompte.textContent = t("avancement_compte",
+      { fait: tache.fait, total: tache.total === null ? "?" : tache.total });
+    return;
+  }
+  elAvancement.hidden = true;
+  // Neuf cles, une phrase entiere et correcte par etape et par issue -- et
+  // non `${tache.genre} : termine.`, qui collait un code de protocole dans
+  // une phrase francaise (« analyse : termine. »). La cle se COMPOSE avant
+  // l'appel, dans la variable cle ci-dessous, et jamais par concatenation
+  // ecrite a l'interieur des parentheses de l'appel : cela mettrait,
+  // litteralement dans ce fichier, un fragment de nom de cle entre
+  // guillemets juste apres l'appel -- exactement ce que _cles_employees
+  // (tests/test_langues.py) recherche, et qui le ferait prendre pour une
+  // cle a part entiere absente des tables. Les neuf cles sont dans
+  // _CLES_SERVEUR pour la meme raison.
+  let texte;
+  if (tache.etat === "terminee") {
+    const cle = "tache_" + tache.genre + "_terminee";
+    texte = t(cle) + texteComptes(tache.resultat);
+  } else if (tache.etat === "echouee") {
+    const cle = "tache_" + tache.genre + "_echouee";
+    // {detail} porte le message d'exception TEL QUEL, non traduit et c'est
+    // voulu : du texte de diagnostic, pas de la copie d'interface.
+    texte = t(cle, { detail: tache.message });
+  } else {
+    const cle = "tache_" + tache.genre + "_annulee";
+    texte = t(cle);
+  }
+  if (tache.avertissement) texte += " " + texteDuFait(tache.avertissement);
+  elResultatTache.textContent = texte;
+  elResultatTache.hidden = false;
+}
+
+let sondage = null;
+
+function arreteSondage() {
+  if (sondage !== null) { clearInterval(sondage); sondage = null; }
+}
+
+function suitLaTache() {
+  if (sondage !== null) return;
+  sondage = setInterval(async () => {
+    // Nommee `tache`, pas `t` : `t` est la fonction de traduction declaree
+    // plus haut, et un `let` local du meme nom l'aurait masquee pour toute
+    // la duree de ce callback (meme classe de piege que l'ancien
+    // afficheTache(t)).
+    let tache;
+    try {
+      tache = await litJSON("/api/tache");
+    } catch (e) {
+      // On arrete le sondage : le repeter toutes les 500 ms sur un serveur
+      // qui ne repond plus n'apporte rien et remplit la console. La tache,
+      // elle, continue cote serveur si le processus tourne encore.
+      arreteSondage();
+      return signaleServeurInjoignable();
+    }
+    afficheTache(tache);
+    if (tache.etat !== "en_cours") {
+      arreteSondage();
+      // genere() supprime chaque .jpg avant de reextraire. Quand la relance
+      // part d'un etat PRET, la pellicule reste visible pendant ce temps (la
+      // classe pas-pret n'est recalculee que par chargeFrames, a la fin) :
+      // les /thumb/N.jpg demandes dans cette fenetre ont pris un 404. Or
+      // cacheImg n'est jamais vide, seulement elague par distance a etat.pos
+      // (voir precharge) : ces <img> en echec y resteraient, et le bandeau
+      // resterait casse jusqu'a un rechargement manuel de la page.
+      //
+      // Vide pour les trois issues, pas seulement "terminee" : une
+      // extraction annulee ou echouee a deja supprime des .jpg.
+      if (tache.genre === "vignettes") cacheImg.clear();
+      await chargeFrames();     // l'etat du serveur a ete reconstruit
+    }
+  }, 500);
+}
+
+async function lance(genre, options) {
+  const corps = Object.assign({ genre: genre }, options || {});
+  let r;
+  try {
+    r = await fetch("/api/tache", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corps),
+    });
+  } catch (e) {
+    // Meme raison que pour les autres requetes : sans ce traitement, un
+    // clic sur le bouton Lancer le rendu apres l'arret du viewer ne ferait
+    // rien du tout, sans un mot.
+    return signaleServeurInjoignable();
+  }
+  if (r.status === 409) {
+    // Deux causes possibles, et l'utilisateur doit savoir laquelle : une
+    // tache deja en cours, ou une sortie existante qui attend ecraser=true.
+    // Nommee `d` et non `t` : `t` est la fonction de traduction declaree
+    // plus haut, meme convention que partout ailleurs dans ce fichier --
+    // eviter un `let` local de ce nom, y compris quand rien ici n'appelle
+    // t() directement (voir signaleErreur, qui traduit elle-meme sa cle).
+    let d;
+    try {
+      d = await litJSON("/api/tache");
+    } catch (e) {
+      return signaleServeurInjoignable();
+    }
+    if (d.etat === "en_cours") signaleErreur("erreur_tache_en_cours");
+    else proposeEcrasement(genre, options);
+    return;
+  }
+  if (!r.ok) { signaleErreur("erreur_requete_refusee"); return; }
+  effaceErreur();
+  suitLaTache();
+}
+
+function proposeEcrasement(genre, options) {
+  if (confirm(t("confirmer_ecrasement")))
+    lance(genre, Object.assign({}, options, { ecraser: true }));
+}
+
+elLancerVignettes.addEventListener("click", () => {
+  // Refaire les vignettes relance l'extraction complete depuis la source :
+  // rien d'irremplacable n'est detruit (elles se refabriquent), mais c'est la
+  // plus longue des trois etapes et on ne la relance pas d'un clic distrait.
+  // Meme idiome que proposeEcrasement : un confirm(), pas de dialogue maison.
+  // L'analyse, elle, ne coute qu'un cache reecrit : elle part sans question.
+  if (elLancerVignettes.dataset.refaire === "1"
+      && !confirm(t("confirmer_refaire_vignettes")))
+    return;
+  lance("vignettes", {});
+});
+elLancerAnalyse.addEventListener("click", () => lance("analyse", {}));
+elLancerRendu.addEventListener("click",
+  () => lance("rendu", { png: elRenduPng.checked }));
+elAnnuler.addEventListener("click",
+  () => fetch("/api/tache", { method: "DELETE" })
+          .catch(signaleServeurInjoignable));
+
+// -- Le choix de la source, par la boite de dialogue du systeme.
+//
+// Le viewer peut s'ouvrir sur rien : sans ce bloc, la page n'aurait AUCUN
+// moyen de designer une video et les trois boutons rendraient 400.
+//
+// L'explorateur web qui tenait ici listait un dossier a la fois, sans
+// completion ni favoris ni « recents ». L'utilisateur l'a essaye et a
+// demande un vrai explorateur de fichier : c'est celui du systeme, ouvert
+// par le serveur (POST /api/parcourir), et la page n'a plus a naviguer.
+
+// Message du panneau de source : l'attente, et les refus. Il ne passe PAS
+// par signaleErreur : le bandeau d'erreur de la colonne porte
+// l'avertissement du serveur sur les decisions, et l'ecraser avec « ce
+// fichier n'est pas une video » ferait disparaitre le seul endroit ou
+// l'operateur apprend que son tri n'est plus lu.
+//
+// refus distingue les deux tons : l'attente est une information, un refus
+// se lit en gras et s'ouvre par un « ! » — jamais par la seule couleur.
+//
+// `recette` est une FONCTION qui calcule le texte (jamais le texte deja
+// calcule), ou null pour ne rien afficher : rafraichitTextesDynamiques la
+// rejoue depuis derniereMessageSource pour repeindre ce message -- boite
+// ouverte, refus de la boite ou de la source -- dans la nouvelle langue sans
+// reinterroger le serveur.
+function messageSource(recette, refus) {
+  derniereMessageSource = recette ? { recette, refus } : null;
+  elSourceMessage.textContent = recette ? recette() : "";
+  elSourceMessage.hidden = !recette;
+  elSourceMessage.classList.toggle("refus", !!refus);
+}
+
+// Vrai pendant que la boite du systeme est ouverte. La requete reste EN
+// ATTENTE tout ce temps — c'est le fil du gestionnaire HTTP qui tient la
+// boite (voir viewer._parcourir) — et une page qui ne dirait rien
+// paraitrait figee. Ce drapeau evite aussi d'en demander une seconde depuis
+// le meme onglet, ce que le serveur refuserait par un 409.
+let boiteOuverte = false;
+
+async function parcourt() {
+  if (boiteOuverte) return;
+  boiteOuverte = true;
+  // Le bouton s'eteint AUSSI : majZoneLancement le rallumerait sinon a la
+  // premiere fin de tache survenue pendant que la boite est ouverte.
+  elChoisirSource.disabled = true;
+  messageSource(() => t("message_boite_ouverte"), false);
+  let r;
+  try {
+    // Le titre de la boite et ses filtres s'affichent dans une fenetre du
+    // SYSTEME, jamais dans le DOM : aucune solution cote page ne les
+    // atteint, d'ou ce corps -- la seule voie par laquelle la langue de la
+    // page peut leur parvenir (voir dialogue.choisit_video).
+    r = await fetch("/api/parcourir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ langue: langueEffective() })
+    });
+  } catch (e) {
+    messageSource(null, false);
+    return signaleServeurInjoignable();
+  } finally {
+    boiteOuverte = false;
+    // Rendu a majZoneLancement, qui sait s'il y a une tache en cours : le
+    // rallumer inconditionnellement ici le rendrait cliquable pendant un
+    // rendu.
+    majZoneLancement();
+  }
+  if (r.status === 503) {
+    // LA BOITE NE S'OUVRE PAS — machine sans affichage, session distante.
+    // Il n'y a plus d'explorateur web pour prendre le relais : ce message
+    // est la SEULE issue, et la cle "boite_indisponible" y met de quoi s'en
+    // sortir (relancer avec la source en argument). Se taire ici
+    // enfermerait l'utilisateur sur une page sans aucune prise.
+    let f = null;
+    try { f = await r.json(); } catch (e) { /* corps vide */ }
+    // Le "!" est une convention visuelle de refus (voir messageSource),
+    // pas un mot de la phrase : il reste hors table, colle a un texte qui,
+    // lui, passe par t() -- le fait envoye par le serveur si present, sinon
+    // le repli traduit.
+    return messageSource(() => "! " + (f ? texteDuFait(f)
+      : t("boite_indisponible", { detail: "" })), true);
+  }
+  if (!r.ok) {
+    // 409 : une boite est deja ouverte, dans cet onglet ou dans un autre.
+    return messageSource(() => "! " + (r.status === 409
+      ? t("message_boite_deja_ouverte")
+      : t("message_boite_refusee")), true);
+  }
+  let d;
+  try { d = await r.json(); } catch (e) { d = { chemin: null }; }
+  // chemin nul = annulation. C'est une reponse normale : on efface le
+  // message d'attente et on ne dit rien de plus.
+  if (!d.chemin) return messageSource(null, false);
+  await choisitSource(d.chemin);
+}
+
+async function choisitSource(chemin) {
+  let r;
+  try {
+    r = await fetch("/api/source", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chemin: chemin }),
+    });
+  } catch (e) {
+    return signaleServeurInjoignable();
+  }
+  if (!r.ok) {
+    // 400 : fichier absent, ou que ffmpeg ne sait pas lire — la boite filtre
+    // par extension et ne sonde rien (275 ms par fichier), et « Tous les
+    // fichiers » y reste offert : un fichier a l'extension trompeuse arrive
+    // donc jusqu'ici. 409 : une tache tourne.
+    return messageSource(() => "! " + (r.status === 409
+      ? t("message_tache_en_cours_source")
+      : t("message_fichier_invalide")), true);
+  }
+  messageSource(null, false);
+  // Tout ce qui parlait de l'ANCIENNE source doit partir AVANT de redemander
+  // l'etat. Le cache d'images surtout : ses <img> pointent sur /thumb/N.jpg,
+  // que le serveur sert desormais depuis les vignettes de la nouvelle source
+  // — sans ce vidage, le bandeau montrerait les images de la precedente.
+  // (cacheImg n'est jamais vide de lui-meme, seulement elague par distance a
+  // etat.pos : voir precharge.)
+  lecture(false);
+  cacheImg.clear();
+  etat.frames = [];
+  etat.pos = 0;
+  // Le resultat d'une tache lancee sur l'ancienne source ne dit plus rien
+  // de celle-ci : le moteur, lui, garde son instantane (constat de la
+  // tache 6), la page n'a donc qu'a cesser de l'afficher.
+  elResultatTache.hidden = true;
+  await chargeFrames();
+}
+
+elChoisirSource.addEventListener("click", () => parcourt());
+
+// Rattachement : au chargement de la page, AVANT tout le reste, savoir si
+// une tache tourne deja. L'etat vit entierement cote serveur : il suffit de
+// le demander, rien d'autre a reconstruire ici. (Pas de top-level await :
+// ce script n'est pas un module.)
+async function demarre() {
+  // AVANT tout retour anticipe, y compris l'echec de /api/tache juste en
+  // dessous : sans cela, un serveur qui ne repond pas a cette toute premiere
+  // requete faisait sortir cette fonction avant que chargeLangues() n'ait
+  // jamais tourne, et la page restait FIGEE sur des noms de cles bruts
+  // (t(cle) les rend telles quelles tant que tables vaut null, voir t()
+  // tout en haut) -- y compris le bandeau que signaleServeurInjoignable
+  // affiche juste apres. Appeler chargeLangues() en tout premier, ici,
+  // garantit qu'elle a tourne (avec succes ou non -- voir son propre
+  // commentaire) avant le premier t() atteignable depuis cette fonction.
+  await chargeLangues();
+  // SANS await, et volontairement : la version est une reference d'appoint.
+  // L'attendre retarderait tout le demarrage pour un appel a git, et un
+  // echec de cette route ne doit rien empecher -- c'est justement le
+  // reproche fait au chemin d'echec de /api/tache, qui figeait la page.
+  chargeVersion();
+  // Nommee `tache`, pas `t` : meme raison que dans suitLaTache ci-dessus.
+  let tache;
+  try {
+    tache = await litJSON("/api/tache");
+  } catch (e) {
+    return signaleServeurInjoignable();
+  }
+  // afficheTache pour TOUT etat non nul, et pas seulement "en_cours" : un
+  // onglet ouvert apres la fin du rendu doit lire ce qu'il a produit, et
+  // retrouver la case d'export telle qu'elle a ete cochee. tache.etat vaut
+  // null tant qu'aucune tache n'a jamais tourne — la, il n'y a rien a dire.
+  if (tache.etat !== null) afficheTache(tache);
+  if (tache.etat === "en_cours") suitLaTache();
+  await chargeFrames();
+  // Sans source, on NE FORCE PAS la boite du systeme a s'ouvrir : l'ancien
+  // explorateur web se depliait d'emblee, ce qui etait sans consequence
+  // puisqu'il vivait dans la page. Une fenetre modale posee sur le bureau
+  // au chargement d'un onglet, elle, est une prise de contact ; et un
+  // second onglet ouvert par megarde en recevrait une deuxieme, que le
+  // serveur refuserait. Le panneau dit « Aucune source choisie » et le
+  // bouton attend un clic.
+}
+demarre();
+</script>
+
+<script>
+// Bascule de theme : systeme -> clair -> sombre -> systeme. « systeme » est
+// l'ABSENCE de choix, donc l'absence d'attribut data-theme : la feuille
+// retombe alors sur prefers-color-scheme. Le choix survit au rechargement
+// (localStorage), et il est relu tout en haut de la page pour que rien ne
+// s'affiche dans le mauvais theme avant d'etre corrige.
+(function () {
+  const CLE = "viewer-theme";
+  const SUITE = ["systeme", "clair", "sombre"];
+  const ATTRIBUT = { clair: "light", sombre: "dark" };
+  const el = document.getElementById("theme");
+  let courant = "systeme";
+  try {
+    const c = localStorage.getItem(CLE);
+    if (c === "clair" || c === "sombre") courant = c;
+  } catch (e) { /* localStorage indisponible : on suit le systeme */ }
+
+  // La timeline est un canvas : ses couleurs sont peintes, pas heritees. Un
+  // changement de theme ne les repeint pas tout seul, il faut le redemander.
+  // dessineTimeline relit les jetons a chaque passe (voir plus haut), donc un
+  // simple rappel suffit. Les cadres des vignettes, eux, sont en CSS et
+  // suivent la cascade sans rien demander.
+  function repeint() {
+    if (typeof dessineTimeline === "function") dessineTimeline();
+  }
+
+  function applique(choix) {
+    courant = choix;
+    if (choix === "systeme") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = ATTRIBUT[choix];
+    // t("bouton_theme") et non un data-t sur #theme : ce texte porte l'etat
+    // courant, qu'un data-t effacerait au premier changement de langue (voir
+    // le commentaire pose sur le bouton dans le balisage). rafraichitTheme,
+    // expose plus bas, est justement ce qui permet a un changement de langue
+    // de repasser par ICI plutot que d'ecraser ce texte depuis appliqueLangue.
+    // Rien tant que tables est null (voir appliqueLangue, premier bloc de
+    // script) : ce bloc s'execute au chargement, AVANT que chargeLangues()
+    // n'ait pose les tables, et t() rendrait alors "bouton_theme" en toutes
+    // lettres par-dessus le repli "Theme" ecrit dans le balisage.
+    if (tables) el.textContent = t("bouton_theme") + " : " + choix;
+    try {
+      if (choix === "systeme") localStorage.removeItem(CLE);
+      else localStorage.setItem(CLE, choix);
+    } catch (e) { /* le choix ne survivra pas au rechargement, tant pis */ }
+    repeint();
+  }
+
+  el.addEventListener("click",
+    () => applique(SUITE[(SUITE.indexOf(courant) + 1) % SUITE.length]));
+  // En mode systeme, le theme peut changer sans clic (reglage de l'OS).
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener(
+    "change", () => { if (courant === "systeme") repeint(); });
+  // Rappelee par rafraichitTextesDynamiques (voir plus haut) a chaque
+  // changement de langue : reapplique SANS relire localStorage, pour ne pas
+  // perturber le theme choisi -- seul son libelle doit changer de langue.
+  window.rafraichitTheme = () => applique(courant);
+  applique(courant);
+})();
+
+// Selecteur de langue : systeme -> francais -> english -> systeme, exactement
+// le meme schema que la bascule de theme juste au-dessus (meme cle de
+// stockage-style, meme cycle par clic).
+(function () {
+  const el = document.getElementById("langue");
+  try {
+    const c = localStorage.getItem(CLE_LANGUE);
+    if (c === "francais" || c === "english") langueCourante = c;
+  } catch (e) { /* localStorage indisponible : on suit le systeme */ }
+
+  // Trois branches litterales, et non un t(cle) construit par concatenation
+  // (prefixe fixe + choix) : une telle ecriture met, litteralement dans le
+  // fichier, une parenthese ouvrante suivie d'un guillemet puis d'un
+  // fragment de nom de cle tronque -- exactement ce que _cles_employees
+  // (tests/test_langues.py) recherche. Le fragment serait pris pour une cle
+  // a part entiere, absente des tables, et ferait echouer le test de
+  // completude. Trois appels entierement litteraux restent, eux,
+  // individuellement corrects.
+  function libelleLangue(choix) {
+    if (choix === "francais") return t("langue_francais");
+    if (choix === "english") return t("langue_english");
+    return t("langue_systeme");
+  }
+
+  // Peint SEULEMENT le texte du bouton, sans passer par appliqueLangue.
+  // Separee d'applique() pour deux raisons :
+  //   - rien tant que tables est null (meme raison que pour #theme
+  //     ci-dessus) : ce bloc s'execute au chargement, avant que
+  //     chargeLangues() n'ait pose les tables, et t() rendrait sinon
+  //     "selecteur_langue" en toutes lettres par-dessus le repli "Langue"
+  //     ecrit dans le balisage ;
+  //   - window.rafraichitLangue (plus bas) doit pouvoir repeindre ce texte
+  //     UNE FOIS les tables chargees SANS rappeler appliqueLangue(), qui
+  //     rappelle elle-meme rafraichitTextesDynamiques -- un aller-retour qui
+  //     bouclerait immediatement si ce texte le redemandait a son tour.
+  function peintBouton() {
+    if (tables) el.textContent = t("selecteur_langue", { choix: libelleLangue(langueCourante) });
+  }
+
+  function applique(choix) {
+    langueCourante = choix;
+    peintBouton();
+    try {
+      if (choix === "systeme") localStorage.removeItem(CLE_LANGUE);
+      else localStorage.setItem(CLE_LANGUE, choix);
+    } catch (e) { /* le choix ne survivra pas au rechargement, tant pis */ }
+    appliqueLangue();
+  }
+
+  el.addEventListener("click",
+    () => applique(LANGUES[(LANGUES.indexOf(langueCourante) + 1) % LANGUES.length]));
+  // Rappelee par rafraichitTextesDynamiques, exactement comme
+  // window.rafraichitTheme juste au-dessus : reprend ce texte des que les
+  // tables arrivent (chargeLangues, dans demarre) sans jamais boucler sur
+  // appliqueLangue -- voir peintBouton ci-dessus.
+  window.rafraichitLangue = peintBouton;
+  applique(langueCourante);
+})();
+</script>
+</html>

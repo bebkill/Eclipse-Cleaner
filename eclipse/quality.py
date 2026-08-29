@@ -1,0 +1,319 @@
+"""Mesures de qualite par frame et verdicts de tri.
+
+Principe directeur : une frame decadree n'est pas une frame defectueuse.
+Le stabilisateur corrige la position. On ne rejette que ce que le pipeline
+ne sait pas reparer : le flou, la perte de lumiere, l'eblouissement,
+l'echec de localisation.
+"""
+import numpy as np
+
+from .locate import sobel
+from .track import rolling_median
+
+SEUILS_DEFAUT = {
+    "dark_rel": 0.35,      # fraction de la mediane locale de disk_p90
+    "dark_abs": 40.0,      # plancher absolu, attrape la perte durable de fin
+    # Fraction de la mediane locale de limb_sharpness. A 0,50 les dernieres
+    # frames du coucher etaient rejetees a tort : quand l'horizon mange le
+    # disque, la nettete du limbe chute parce qu'il en reste moins a mesurer,
+    # non parce que la camera bouge. 0,40 rend les frames 2495 a 2497, soit
+    # les tout derniers instants du Soleil ; descendre plus bas n'en rend
+    # aucune de plus.
+    "blur_rel": 0.40,
+    "flare_rel": 3.0,      # multiple de la mediane locale de flare_ratio
+    "conf_min": 0.02,      # confiance minimale du vote de Hough
+    # Ecart maximal du niveau a sa mediane locale, en fraction. A 0,35 une
+    # seule frame de la sequence reelle est ecartee (la 184 : niveau 36,3
+    # contre 91,7 autour) ; a 0,25 il y en a neuf, a 0,15 onze, sans qu'aucun
+    # saut residuel ne diminue -- ces frames-la n'etaient pas des defauts.
+    "niveau_rel": 0.35,
+    "fenetre_niveau": 31,  # reference du niveau : courte, voir classify()
+    "fenetre_ref": 301,    # largeur de la reference locale, en frames
+    # Longueur minimale d'une plage conservee. Neutralise (1 = aucun ilot
+    # supprime) sur la revue humaine des 2556 frames (decisions du viewer,
+    # 2026-08-15) : l'utilisateur a repris 29 ilots sur 29, y compris des
+    # frames isolees entre deux coupes de la traversee nuageuse (28-38 s).
+    # A l'ancienne valeur de 5, tous les ilots observes etaient des artefacts
+    # de la fragmentation causee par des rejets hors_source trop stricts —
+    # recalibres eux aussi (voir pipeline.TOLERANCE_BORD_DEFAUT) : au nouveau
+    # reglage, ilot_min 5 ou 1 donnent le meme resultat sur la sequence. Le
+    # verdict decentre et sa butee dure ont depuis disparu, remplaces par la
+    # trajectoire planifiee (voir track.planifie_trajectoire). Le mecanisme
+    # (supprime_ilots) reste en place, reactivable par --ilot-min si un autre
+    # tournage produit de vrais eclairs.
+    "ilot_min": 1,
+}
+
+
+def _grille(h, w):
+    """Vecteurs de coordonnees diffuses (broadcast) pour une forme (h, w).
+
+    Remplace np.mgrid[0:h, 0:w], qui alloue deux tableaux pleins (h, w) : ici
+    yy est (h, 1) et xx est (1, w), combines par diffusion numpy au moment de
+    l'usage sans jamais materialiser la grille complete. measure_quality et
+    masse_captee batissaient chacune la meme grille ; partager cette fonction
+    evite la double allocation sans introduire de cache garde par forme.
+    """
+    yy = np.arange(h, dtype=np.float32)[:, None]
+    xx = np.arange(w, dtype=np.float32)[None, :]
+    return yy, xx
+
+
+def measure_quality(gray, cx, cy, r):
+    """Mesures de qualite d'une frame, autour du centre fourni."""
+    if not (np.isfinite(cx) and np.isfinite(cy)):
+        return {"disk_p90": float("nan"), "limb_sharpness": float("nan"),
+                "flare_ratio": float("nan")}
+
+    g = gray.astype(np.float32)
+    h, w = g.shape
+    yy, xx = _grille(h, w)
+    dx = xx - cx
+    dy = yy - cy
+    d2 = dx * dx + dy * dy
+    # d2 <= r*r n'est PAS bit-exact a dist <= r en float32 : les deux seuils
+    # arrondissent differemment (mesure sur la sequence reelle : 4 frames sur
+    # 150 changent l'appartenance d'exactement un pixel, jusqu'a 9,97e-06 sur
+    # flare_ratio). Comme les seuils de tri sont calibres sur ces mesures,
+    # une racine unique ici est preferee a la forme au carre : le gain de
+    # _grille (plus de mgrid) reste acquis, seul celui du carre est abandonne.
+    # Mesure sur la sequence reelle a 540x960, measure_quality + masse_captee
+    # ensemble, apres cet abandon partiel : 54,5 ms/frame -> 25,0 ms (-54%),
+    # contre -58% avec la forme au carre finalement rejetee pour cause de
+    # derive numerique (voir rapport-perf.md).
+    dist = np.sqrt(d2)
+
+    interieur = dist <= r
+    disk_p90 = float(np.percentile(g[interieur], 90.0)) if interieur.any() else 0.0
+
+    # Nettete du limbe : gradient de pointe sur l'anneau, rapporte au
+    # contraste du disque pour rester comparable d'un regime a l'autre.
+    anneau = (dist >= 0.85 * r) & (dist <= 1.15 * r)
+    if anneau.any() and disk_p90 > 1e-6:
+        gx, gy = sobel(g)
+        # mag2 = gx**2 + gy**2 = mag**2, mais np.percentile INTERPOLE entre
+        # les deux statistiques d'ordre voisines : sqrt(percentile(mag2)) !=
+        # percentile(sqrt(mag2)) en general (la racine est croissante, donc
+        # preserve le RANG, mais pas l'interpolation lineaire entre deux
+        # valeurs). Mesure sur la sequence reelle : jusqu'a 1,07e-05 d'ecart
+        # sur limb_sharpness avec la forme fautive, au-dessus du seuil de
+        # 1e-4 relatif qui deplacerait le sens d'un seuil de tri sur des cas
+        # synthetiques plus defavorables (jusqu'a 3,5e-04). La racine est
+        # donc appliquee au sous-ensemble mag2[anneau] AVANT le percentile,
+        # pas au resultat scalaire du percentile : l'anneau ne pesant que
+        # 11-14% de la frame, l'essentiel du gain (pas de racine sur toute
+        # la carte de gradient) est conserve.
+        # PERCENTILE 98, ET NON 90. Le limbe n'occupe que 1,7 a 2,2 % des
+        # pixels de l'anneau -- mesure sur les frames 700, 745, 756, 775 et
+        # 798 de la sequence reelle, ou l'anneau compte 58 700 a 74 100 px
+        # pour 1 016 a 1 596 px de limbe. Le limbe siege donc vers le 98e
+        # percentile, et un p90 ne l'atteint JAMAIS : il rendait 7 a 17 la
+        # ou la mediane des pixels de limbe vaut 140 a 256.
+        #
+        # La consequence n'etait pas theorique. Sur les frames 750 a 800 le
+        # p90 s'effondrait de 15,5 a 6,5 pendant que le limbe s'AFFINAIT --
+        # largeur de transition 80/20 mesuree a 1,5-2,0 px contre 5,0-6,0 px
+        # avant --, ce qui rejetait pour « flou » les neuf frames les plus
+        # nettes de la sequence. Au p98 le creux disparait et ces neuf
+        # frames repassent, sans qu'aucune frame reellement floue ne passe.
+        mag2 = gx * gx + gy * gy
+        limb_sharpness = (float(np.percentile(np.sqrt(mag2[anneau]), 98.0))
+                          / disk_p90 * 100.0)
+    else:
+        limb_sharpness = 0.0
+
+    # Eblouissement : masse lumineuse loin du disque, marge de halo exclue.
+    dehors = dist > 1.4 * r
+    if dehors.any() and disk_p90 > 1e-6:
+        flare_ratio = float(g[dehors].mean()) / disk_p90
+    else:
+        flare_ratio = 0.0
+
+    return {"disk_p90": disk_p90, "limb_sharpness": limb_sharpness,
+            "flare_ratio": flare_ratio}
+
+
+#: Fraction du pic de luminosite au-dela de laquelle un pixel est tenu pour
+#: lumineux. Relatif au maximum de la frame, donc insensible aux deux regimes
+#: d'exposition de la sequence (filtre solaire puis prise de vue directe).
+SEUIL_LUMIERE = 0.35
+
+
+def masse_captee(gray, cx, cy, r):
+    """Fraction de la lumiere de l'image contenue dans le disque (cx, cy, r).
+
+    Repond a une question que ni la confiance du vote ni le verdict de tri ne
+    posent : le centre trouve explique-t-il l'image ? La confiance mesure la
+    force d'un pic de vote, pas sa justesse — les frames dont le cadrage etait
+    faux affichaient 0,072 a 0,094, au-dessus de tous les seuils.
+
+    Mesure sur la sequence reelle, 2525 frames : mediane 0,997, p10 0,964,
+    p1 0,370. Les 33 frames sous 0,50 ont toutes une zone lumineuse 1,4 a 2,4
+    fois plus large que le diametre du Soleil — nuages eclaires par derriere,
+    eblouissements, ciel crepusculaire apres le coucher. Aucune n'a de disque
+    reel mal localise : la mesure juge la coherence, elle ne cherche pas mieux.
+
+    Attention a sa portee : ce qui compte est la zone LUMINEUSE, pas le
+    disque entier, si bien que la sensibilite depend de la phase d'eclipse.
+    Mesure sur la sequence reelle, pour une erreur de centre de 50 px en
+    pleine resolution : la capture tombe a 0,87 au debut, 0,61 en eclipse
+    profonde, mais reste a 0,99 sur le croissant fin de la fin. Ce critere
+    attrape donc un centre qui tombe sur autre chose, pas un centre decale
+    de quelques dizaines de pixels.
+
+    Retourne NaN si le centre n'est pas fini ou si l'image n'a pas de lumiere
+    exploitable — a l'appelant de decider ce qu'il en fait.
+    """
+    if not (np.isfinite(cx) and np.isfinite(cy)):
+        return float("nan")
+    g = np.asarray(gray, dtype=np.float32)
+    pic = float(g.max())
+    if pic <= 1e-6:
+        return float("nan")
+    lumiere = g > SEUIL_LUMIERE * pic
+    masse = float(g[lumiere].sum())
+    if masse <= 0.0:
+        return float("nan")
+    h, w = g.shape[:2]
+    yy, xx = _grille(h, w)
+    dx = xx - float(cx)
+    dy = yy - float(cy)
+    dedans = (dx * dx + dy * dy) <= float(r) ** 2
+    return float(g[lumiere & dedans].sum()) / masse
+
+
+def classify(disk_p90, limb_sharpness, flare_ratio, confiance, seuils=None,
+             level=None):
+    """Verdict par frame : motif de rejet, ou None si conservee.
+
+    Chaque mesure est comparee a sa mediane glissante plutot qu'a un seuil
+    absolu. La nettete passe de ~13 a ~150 a la frame 1050 de la video reelle,
+    a cause du changement d'exposition : un seuil global rejetterait toute la
+    premiere moitie de la sequence.
+
+    level, s'il est fourni, ajoute le verdict « niveau_aberrant » : une frame
+    dont la luminance s'ecarte trop de sa mediane locale. Facultatif pour que
+    les appelants anterieurs restent valides ; le viewer et le rendu le
+    passent tous les deux.
+    """
+    s = dict(SEUILS_DEFAUT) if seuils is None else dict(SEUILS_DEFAUT, **seuils)
+    p90 = np.nan_to_num(np.asarray(disk_p90, dtype=np.float64), nan=0.0)
+    sharp = np.nan_to_num(np.asarray(limb_sharpness, dtype=np.float64), nan=0.0)
+    flare = np.nan_to_num(np.asarray(flare_ratio, dtype=np.float64), nan=1e9)
+    conf = np.nan_to_num(np.asarray(confiance, dtype=np.float64), nan=0.0)
+    n = len(p90)
+
+    k = min(s["fenetre_ref"], n if n % 2 == 1 else n - 1)
+    k = max(k if k % 2 == 1 else k - 1, 1)
+    ref_p90 = rolling_median(p90, k)
+    ref_sharp = rolling_median(sharp, k)
+    ref_flare = rolling_median(flare, k)
+
+    trop_sombre = (p90 < s["dark_rel"] * ref_p90) | (p90 < s["dark_abs"])
+    pas_de_lock = conf < s["conf_min"]
+    floue = sharp < s["blur_rel"] * ref_sharp
+    eblouie = flare > s["flare_rel"] * np.maximum(ref_flare, 1e-6)
+
+    # Ecart de luminance a la mediane locale. La correction de gain
+    # (photometry.solve_corrections) LISSE la courbe de niveau avant de
+    # l'inverser -- volontairement, pour ne pas effacer l'evolution reelle --
+    # et laisse donc passer une pointe d'une seule frame. Mesure sur la
+    # sequence reelle : saut de 189 % entre deux frames conservees avant
+    # correction, 188,7 % apres. Le gain ne rattrape pas ce genre de defaut,
+    # il faut donc l'ecarter au tri.
+    #
+    # La fenetre est COURTE (31) la ou les autres references en prennent 301 :
+    # l'exposition automatique du smart-telescope change par paliers francs
+    # -- 99,7 puis 156 puis 209 autour de la frame 1085 de la sequence de
+    # reference --, et une fenetre longue prendrait ces paliers pour des
+    # aberrations. A 31 frames la reference suit le palier et ne signale que
+    # ce qui s'en detache.
+    if level is None:
+        aberrante = np.zeros(n, dtype=bool)
+    else:
+        lv = np.nan_to_num(np.asarray(level, dtype=np.float64), nan=0.0)
+        kn = min(s["fenetre_niveau"], n if n % 2 == 1 else n - 1)
+        kn = max(kn if kn % 2 == 1 else kn - 1, 1)
+        ref_lv = rolling_median(lv, kn)
+        aberrante = (np.abs(lv - ref_lv)
+                     > s["niveau_rel"] * np.maximum(ref_lv, 1e-6))
+
+    verdicts = []
+    for i in range(n):
+        if pas_de_lock[i]:
+            verdicts.append("no_lock")
+        elif trop_sombre[i]:
+            verdicts.append("too_dark")
+        elif aberrante[i]:
+            verdicts.append("niveau_aberrant")
+        elif floue[i]:
+            verdicts.append("motion_blur")
+        elif eblouie[i]:
+            verdicts.append("flare")
+        else:
+            verdicts.append(None)
+
+    return supprime_ilots(verdicts, s["ilot_min"])
+
+
+def verdicts_hors_source(cx, cy, rayon_visible, src_w, src_h, tolerance):
+    """Rejette les frames ou le DISQUE sort de l'image filmee.
+
+    A distinguer du critere precedent (verdicts_cadrage, supprime), qui
+    exigeait que toute la fenetre de recadrage tienne dans la source : il
+    rejetait le coucher de Soleil, dont le centre descend a y = 1504 px
+    quand la fenetre n'en tolerait que 1173.
+
+    Ce qui compte n'est pas que la fenetre deborde — elle est butee contre
+    les bords, voir pipeline.render — mais que le disque lui-meme soit
+    ampute. Une tolerance de quelques dizaines de pixels sur un disque de
+    798 px reste invisible.
+
+    Les coordonnees sont en pleine resolution source.
+    """
+    cx = np.asarray(cx, dtype=np.float64)
+    cy = np.asarray(cy, dtype=np.float64)
+    r = float(rayon_visible) - float(tolerance)
+    ok = (np.isfinite(cx) & np.isfinite(cy)
+          & (cx >= r) & (cx <= src_w - r) & (cy >= r) & (cy <= src_h - r))
+    return [None if o else "hors_source" for o in ok]
+
+
+def supprime_ilots(verdicts, ilot_min):
+    """Rejette les plages conservees trop courtes pour ne pas saccader.
+
+    Un ilot n'est supprime que s'il est borde de part et d'autre par des
+    plages rejetees d'au moins ilot_min frames.
+    """
+    n = len(verdicts)
+    garde = np.array([v is None for v in verdicts], dtype=bool)
+    out = list(verdicts)
+
+    i = 0
+    while i < n:
+        if not garde[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and garde[j]:
+            j += 1
+        longueur = j - i
+        if longueur < ilot_min:
+            avant = _longueur_rejet(garde, i - 1, -1)
+            apres = _longueur_rejet(garde, j, +1)
+            if avant >= ilot_min and apres >= ilot_min:
+                for k in range(i, j):
+                    out[k] = "ilot"
+        i = j
+    return out
+
+
+def _longueur_rejet(garde, depart, pas):
+    """Longueur de la plage rejetee contigue a partir de depart."""
+    n = len(garde)
+    compte = 0
+    i = depart
+    while 0 <= i < n and not garde[i]:
+        compte += 1
+        i += pas
+    return compte
