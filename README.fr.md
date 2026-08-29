@@ -50,14 +50,22 @@ cd Eclipse-Cleaner
 python -m pip install .
 ```
 
-Les deux donnent la commande `eclipse-cleaner` (`python -m eclipse` fonctionne à l'identique). Pour une installation isolée, `pipx install git+https://github.com/bebkill/Eclipse-Cleaner.git` fonctionne aussi.
+⚠️ N'oubliez pas le point final de `pip install .` — il signifie « installer depuis ce répertoire ».
+
+Une fois installé, lancez l'outil avec :
+
+```bash
+python -m eclipse viewer
+```
+
+Cette forme fonctionne toujours. L'installation crée aussi une commande plus courte, `eclipse-cleaner`, mais elle n'est trouvée que si le répertoire `Scripts` de votre Python est dans le PATH — sous Windows, ce n'est souvent pas le cas. Si votre terminal répond *« 'eclipse-cleaner' n'est pas reconnu… »*, rien n'est cassé : utilisez simplement `python -m eclipse`. (Une installation via `pipx install git+https://github.com/bebkill/Eclipse-Cleaner.git` configure le PATH pour vous, si vous préférez la commande courte.)
 
 ## Utilisation
 
 ### Le plus simple : le viewer (recommandé)
 
 ```bash
-eclipse-cleaner viewer
+python -m eclipse viewer
 ```
 
 Une page locale s'ouvre dans le navigateur. Cliquez sur **Parcourir…** pour choisir votre vidéo, puis lancez les trois étapes depuis la page :
@@ -83,14 +91,14 @@ Barres d'avancement, annulation et état des tâches vivent côté serveur : fer
 ### En ligne de commande
 
 ```bash
-eclipse-cleaner run entree.mp4 sortie.mp4
+python -m eclipse run entree.mp4 sortie.mp4
 ```
 
 Ou en deux temps, pour rejouer le rendu avec d'autres seuils sans refaire l'analyse :
 
 ```bash
-eclipse-cleaner analyze entree.mp4 --cache analysis.json
-eclipse-cleaner render entree.mp4 sortie.mp4 --cache analysis.json --blur-rel 0.35
+python -m eclipse analyze entree.mp4 --cache analysis.json
+python -m eclipse render entree.mp4 sortie.mp4 --cache analysis.json --blur-rel 0.35
 ```
 
 ### Options principales

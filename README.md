@@ -50,14 +50,22 @@ cd Eclipse-Cleaner
 python -m pip install .
 ```
 
-Both give you the `eclipse-cleaner` command (`python -m eclipse` works identically). For an isolated install, `pipx install git+https://github.com/bebkill/Eclipse-Cleaner.git` also works.
+⚠️ Don't miss the trailing dot in `pip install .` — it means "install from this directory".
+
+Once installed, run the tool with:
+
+```bash
+python -m eclipse viewer
+```
+
+This form always works. The install also creates a shorter `eclipse-cleaner` command, but it is only found if your Python `Scripts` directory is on the PATH — on Windows it often isn't. If your terminal answers *"'eclipse-cleaner' is not recognized…"*, nothing is broken: just use `python -m eclipse` instead. (An install through `pipx install git+https://github.com/bebkill/Eclipse-Cleaner.git` sets up the PATH for you, if you prefer the short command.)
 
 ## Usage
 
 ### The easy way: the viewer (recommended)
 
 ```bash
-eclipse-cleaner viewer
+python -m eclipse viewer
 ```
 
 This opens a local page in your browser. Click **Browse…** to pick your video, then run the three steps from the page:
@@ -83,14 +91,14 @@ Progress bars, cancellation, and task state all live server-side: closing the ta
 ### The command-line way
 
 ```bash
-eclipse-cleaner run input.mp4 output.mp4
+python -m eclipse run input.mp4 output.mp4
 ```
 
 Or in two steps, so you can re-render with different thresholds without re-analyzing:
 
 ```bash
-eclipse-cleaner analyze input.mp4 --cache analysis.json
-eclipse-cleaner render input.mp4 output.mp4 --cache analysis.json --blur-rel 0.35
+python -m eclipse analyze input.mp4 --cache analysis.json
+python -m eclipse render input.mp4 output.mp4 --cache analysis.json --blur-rel 0.35
 ```
 
 ### Main options
