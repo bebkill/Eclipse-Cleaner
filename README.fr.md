@@ -82,6 +82,8 @@ Une page locale s'ouvre dans le navigateur. Cliquez sur **Parcourir…** pour ch
 2. **Analyser les images** (mesures et verdicts automatiques) ;
 3. **Produire la vidéo finale** → écrite à côté de la source, sous `<source>-clean.mp4` (avec en option une séquence PNG numérotée).
 
+Sous le bouton de rendu, la case **stabiliser la couleur** (cochée par défaut) supprime les oscillations de balance des blancs de l'exposition automatique, vers la teinte propre de la séquence — jamais vers le neutre. Sa section dépliable **paramètres** porte les réglages fins : la *fenêtre* de la référence de teinte (typique : 31 images, plafonnée au nombre d'images de la séquence — au-delà la référence sature et agrandir la fenêtre ne change plus rien) et la *correction max* par canal (typique : 0,25, soit ±25 %). La luminosité, elle, est toujours normalisée, case cochée ou non. Changer un paramètre marque le rendu existant « à refaire » : le bandeau ne présente jamais une sortie périmée comme à jour.
+
 Entre les étapes 2 et 3, **revoyez le tri** : la timeline montre les frames conservées en vert, les écartées en rouge, vos propres corrections en bleu. La touche `k` conserve ou écarte la frame courante — chaque bascule est enregistrée immédiatement, et le rendu applique vos décisions automatiquement.
 
 | Touche | Effet |

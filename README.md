@@ -82,6 +82,8 @@ This opens a local page in your browser. Click **Browse…** to pick your video,
 2. **Analyze the frames** (measurements and automatic verdicts);
 3. **Produce the final video** → written next to your source as `<source>-clean.mp4` (optionally with a numbered PNG sequence).
 
+Under the render button, the **stabilize color** checkbox (on by default) removes the frame-to-frame white-balance oscillations of automatic exposure, toward the sequence's own tint — never toward neutral. Its collapsible **parameters** section holds the fine-tuning: the tint-reference *window* (typical: 31 frames, capped at the sequence length — beyond that the reference saturates and a larger window changes nothing) and the *max correction* per channel (typical: 0.25, i.e. ±25 %). Brightness is always normalized, checkbox or not. Changing a parameter marks an existing render as *to redo*, so the banner never claims a stale output is current.
+
 Between steps 2 and 3, **review the sorting**: the timeline shows kept frames in green, rejected ones in red, your own overrides in blue. Press `k` on any frame to keep or discard it — each change is saved immediately, and the render applies your decisions automatically.
 
 | Key | Effect |
