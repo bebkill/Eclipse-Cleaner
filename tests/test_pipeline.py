@@ -522,6 +522,30 @@ def test_main_viewer_transmet_le_cadrage_a_sert(video_synthetique, tmp_path,
     assert k["depassement_butee"] == 42.0
 
 
+def test_main_viewer_transmet_la_couleur_a_sert(video_synthetique, tmp_path,
+                                                monkeypatch):
+    """Meme classe que le cadrage ci-dessus : une option acceptee par le
+    sous-parseur viewer mais non transmise a sert() donnerait un rendu
+    lance depuis la page qui ne correspond pas a ce que la ligne de
+    commande a demande, silencieusement."""
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0)
+    appels = {}
+
+    def faux_sert(*args, **kwargs):
+        appels["kwargs"] = kwargs
+
+    monkeypatch.setattr("eclipse.pipeline.sert", faux_sert)
+    code = main(["viewer", video_synthetique, "--cache", cache,
+                "--sans-couleur", "--couleur-fenetre", "15",
+                "--couleur-amplitude", "0.1"])
+    assert code == 0
+    k = appels["kwargs"]
+    assert k["couleur"] is False
+    assert k["couleur_fenetre"] == 15
+    assert k["couleur_amplitude"] == 0.1
+
+
 def test_main_viewer_refuse_sans_decisions(video_synthetique, tmp_path,
                                            monkeypatch):
     """--sans-decisions n'a pas de sens pour le viewer : il affiche
@@ -605,6 +629,101 @@ def test_render_transmet_vitesse_et_depassement(tmp_path, monkeypatch):
     render(src, str(tmp_path / "o.mp4"), cache, taille=(60, 100),
            taille_sortie=(60, 100), depassement_butee=10.0)
     assert appels == [10.0, 10.0]                  # un appel par axe
+
+
+def test_render_stabilise_la_couleur_par_defaut(video_synthetique, tmp_path,
+                                                monkeypatch):
+    """Par defaut, chaque frame part chez les travailleurs avec un gain par
+    canal : c'est la stabilisation de balance rapportee manquante sur la
+    video publiee (« the white balance keeps changing »)."""
+    import eclipse.pipeline as pl
+    gains_vus = []
+    vrai = pl.rend_frame
+
+    def espion(travail):
+        gains_vus.append(travail[3])
+        return vrai(travail)
+
+    monkeypatch.setattr(pl, "rend_frame", espion)
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0)
+    render(video_synthetique, str(tmp_path / "o.mp4"), cache,
+           taille=(60, 100), taille_sortie=(60, 100))
+    assert gains_vus
+    assert all(np.shape(g) == (3,) for g in gains_vus)
+
+
+def test_render_sans_couleur_garde_un_gain_scalaire(video_synthetique,
+                                                    tmp_path, monkeypatch):
+    """couleur=False retrouve exactement le comportement historique :
+    luminance seule, canaux intacts."""
+    import eclipse.pipeline as pl
+    gains_vus = []
+    vrai = pl.rend_frame
+
+    def espion(travail):
+        gains_vus.append(travail[3])
+        return vrai(travail)
+
+    monkeypatch.setattr(pl, "rend_frame", espion)
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0)
+    render(video_synthetique, str(tmp_path / "o.mp4"), cache,
+           taille=(60, 100), taille_sortie=(60, 100), couleur=False)
+    assert gains_vus
+    assert all(np.shape(g) == () for g in gains_vus)
+
+
+def test_render_transmet_fenetre_et_amplitude(video_synthetique, tmp_path,
+                                              monkeypatch):
+    import eclipse.pipeline as pl
+    appels = []
+    vrai = pl.solve_couleur
+
+    def espion(wb, valid, fenetre, amplitude):
+        appels.append((fenetre, amplitude))
+        return vrai(wb, valid, fenetre, amplitude)
+
+    monkeypatch.setattr(pl, "solve_couleur", espion)
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0)
+    render(video_synthetique, str(tmp_path / "o.mp4"), cache,
+           taille=(60, 100), taille_sortie=(60, 100),
+           couleur_fenetre=15, couleur_amplitude=0.10)
+    assert appels == [(15, 0.10)]
+
+
+def test_main_render_transmet_sans_couleur(video_synthetique, tmp_path,
+                                           monkeypatch):
+    appels = {}
+
+    def faux_render(*args, **kwargs):
+        appels["kwargs"] = kwargs
+        return {"gardees": 0, "rejetees": 0, "motifs": {}, "interpolees": 0}
+
+    monkeypatch.setattr("eclipse.pipeline.render", faux_render)
+    code = main(["render", video_synthetique, str(tmp_path / "o.mp4"),
+                "--cache", str(tmp_path / "a.json"), "--sans-couleur"])
+    assert code == 0
+    assert appels["kwargs"]["couleur"] is False
+
+
+def test_main_render_transmet_les_reglages_de_couleur(video_synthetique,
+                                                      tmp_path, monkeypatch):
+    appels = {}
+
+    def faux_render(*args, **kwargs):
+        appels["kwargs"] = kwargs
+        return {"gardees": 0, "rejetees": 0, "motifs": {}, "interpolees": 0}
+
+    monkeypatch.setattr("eclipse.pipeline.render", faux_render)
+    code = main(["render", video_synthetique, str(tmp_path / "o.mp4"),
+                "--cache", str(tmp_path / "a.json"),
+                "--couleur-fenetre", "15", "--couleur-amplitude", "0.1"])
+    assert code == 0
+    assert appels["kwargs"]["couleur"] is True
+    assert appels["kwargs"]["couleur_fenetre"] == 15
+    assert appels["kwargs"]["couleur_amplitude"] == 0.1
 
 
 def test_analyze_consigne_la_masse_captee(video_synthetique, tmp_path):

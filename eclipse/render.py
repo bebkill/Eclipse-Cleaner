@@ -176,8 +176,11 @@ def melange_lineaire(a, b, t):
 def apply_frame(rgb, cx, cy, gain, taille=None, knee=0.85, remplissage="noir"):
     """Recentre le disque, applique le gain, sort en uint8.
 
-    La couleur est laissee telle qu'elle a ete filmee : voir
-    photometry.solve_corrections.
+    gain : un scalaire (luminance seule, la couleur reste telle qu'elle a
+    ete filmee — voir photometry.solve_corrections), ou un vecteur (r, g, b)
+    par canal (stabilisation de balance, voir photometry.solve_couleur).
+    apply_frame ne decide rien de la couleur : elle applique ce qu'on lui
+    donne.
 
     taille : (largeur, hauteur) de sortie ; par defaut celle de l'entree.
     remplissage : 'noir' (defaut) ou 'bord'.
@@ -190,7 +193,9 @@ def apply_frame(rgb, cx, cy, gain, taille=None, knee=0.85, remplissage="noir"):
     h, w = f.shape[:2]
     out_w, out_h = (w, h) if taille is None else (int(taille[0]), int(taille[1]))
 
-    f = f * float(gain)
+    # asarray et non float() : un vecteur (r, g, b) se diffuse sur le dernier
+    # axe, un scalaire garde exactement le comportement historique.
+    f = f * np.asarray(gain, dtype=np.float32)
     f = soft_knee(f, knee=knee)
 
     if not (np.isfinite(cx) and np.isfinite(cy)):

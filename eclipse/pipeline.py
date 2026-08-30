@@ -27,7 +27,8 @@ from .locate import estimate_radius
 from .parallele import applique as applique_travaux
 from .parallele import (PROCESSUS_DEFAUT, mesure_frame, nombre_processus,
                         rend_frame)
-from .photometry import solve_corrections
+from .photometry import (AMPLITUDE_COULEUR_DEFAUT, FENETRE_COULEUR_DEFAUT,
+                         solve_corrections, solve_couleur)
 from .quality import SEUILS_DEFAUT
 from .render import melange_lineaire
 from .track import planifie_trajectoire
@@ -211,6 +212,14 @@ DEPASSEMENT_BUTEE_DEFAUT = 400.0
 #: moins quatre cinquiemes de la lumiere sont la ou le centre le pretend ».
 SEUIL_MASQUE_DEFAUT = 0.80
 
+#: La stabilisation de balance (photometry.solve_couleur) est active par
+#: defaut : c'est le correctif du defaut rapporte sur la video publiee
+#: (« the white balance keeps changing »), et sa cible — la propre
+#: trajectoire de teinte de la sequence, correction bornee — la rend sure
+#: la ou la neutralisation historique etait catastrophique. --sans-couleur
+#: retrouve le comportement d'avant, luminance seule.
+COULEUR_DEFAUT = True
+
 
 def _chemin_canonique(path):
     """Chemin comparable : casse normalisee et liens resolus.
@@ -341,6 +350,7 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
           seuil_masque=None,
           decisions_path=None, sans_decisions=False,
           depassement_butee=None,
+          couleur=None, couleur_fenetre=None, couleur_amplitude=None,
           processus=1, progression=None):
     """Passe 2 : trie, stabilise, normalise et encode.
 
@@ -379,6 +389,15 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
     defaut existe ; sert a comparer le tri automatique au tri revu.
     depassement_butee : depassement maximal de la fenetre au-dela des bords
     de la source, en px ; par defaut DEPASSEMENT_BUTEE_DEFAUT.
+    couleur : stabilise la balance des blancs vers sa propre trajectoire
+    (photometry.solve_couleur) ; par defaut COULEUR_DEFAUT. La luminance,
+    elle, est toujours normalisee (solve_corrections), couleur ou pas.
+    couleur_fenetre : fenetre, en frames, de la reference de teinte ; par
+    defaut photometry.FENETRE_COULEUR_DEFAUT. Sans effet si couleur est
+    faux.
+    couleur_amplitude : correction de chroma maximale, en fraction ; par
+    defaut photometry.AMPLITUDE_COULEUR_DEFAUT. Sans effet si couleur est
+    faux.
     processus : nombre de travailleurs pour le calcul par frame ; par defaut
     1, soit le chemin sequentiel, pour la meme raison que dans analyze() — le
     defaut de la ligne de commande, lui, reste parallele.PROCESSUS_DEFAUT.
@@ -467,6 +486,19 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
                                     depassement)
 
     gains = solve_corrections(_colonne(frames, "level"), garde)
+    if COULEUR_DEFAUT if couleur is None else bool(couleur):
+        # Un gain (r, g, b) par frame : la luminance de solve_corrections,
+        # modulee par la stabilisation de balance. wb vient du cache tel que
+        # measure_photometry l'a mesure ; les None (frame sans balance
+        # exploitable) redeviennent NaN, que solve_couleur traite en gain 1.
+        wb = np.array([[np.nan if v is None else float(v) for v in f["wb"]]
+                       for f in frames], dtype=np.float64)
+        gains = gains[:, None] * solve_couleur(
+            wb, garde,
+            FENETRE_COULEUR_DEFAUT if couleur_fenetre is None
+            else couleur_fenetre,
+            AMPLITUDE_COULEUR_DEFAUT if couleur_amplitude is None
+            else couleur_amplitude)
 
     motifs = {}
     for v in verdicts:
@@ -666,6 +698,9 @@ def main(argv=None):
                   decisions_path=args.decisions_path,
                   sans_decisions=args.sans_decisions,
                   depassement_butee=args.depassement_butee,
+                  couleur=not args.sans_couleur,
+                  couleur_fenetre=args.couleur_fenetre,
+                  couleur_amplitude=args.couleur_amplitude,
                   processus=args.processus)
         elif args.commande == "viewer":
             if args.sans_decisions:
@@ -701,7 +736,10 @@ def main(argv=None):
                 taille=args.taille, taille_sortie=args.sortie_taille,
                 interp_max=args.interp_max,
                 interp_deplacement_max=args.interp_deplacement_max,
-                depassement_butee=args.depassement_butee)
+                depassement_butee=args.depassement_butee,
+                couleur=not args.sans_couleur,
+                couleur_fenetre=args.couleur_fenetre,
+                couleur_amplitude=args.couleur_amplitude)
         else:
             if charger_cache(args.cache, args.source) is None:
                 analyze(args.source, args.cache,
@@ -723,6 +761,9 @@ def main(argv=None):
                   decisions_path=args.decisions_path,
                   sans_decisions=args.sans_decisions,
                   depassement_butee=args.depassement_butee,
+                  couleur=not args.sans_couleur,
+                  couleur_fenetre=args.couleur_fenetre,
+                  couleur_amplitude=args.couleur_amplitude,
                   processus=args.processus)
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         print(f"Erreur : {exc}", file=sys.stderr)
@@ -834,3 +875,19 @@ def _ajoute_cadrage(parseur):
         default=None,
         help="Depassement maximal de la fenetre au-dela de la source, en px "
              f"(defaut {DEPASSEMENT_BUTEE_DEFAUT:g})")
+    parseur.add_argument(
+        "--sans-couleur", dest="sans_couleur", action="store_true",
+        help="Ne stabilise pas la balance des blancs ; la luminance reste "
+             "normalisee")
+    parseur.add_argument(
+        "--couleur-fenetre", dest="couleur_fenetre", type=int, default=None,
+        help="Fenetre, en frames, de la reference de teinte de la "
+             f"stabilisation de balance (defaut {FENETRE_COULEUR_DEFAUT})")
+    parseur.add_argument(
+        "--couleur-amplitude", dest="couleur_amplitude", type=float,
+        default=None,
+        # %% et non % : argparse interpole les %(champ)s dans les textes
+        # d'aide, un % isole y est une erreur de format.
+        help="Correction de chroma maximale, en fraction (defaut "
+             f"{AMPLITUDE_COULEUR_DEFAUT:g}, soit +/- "
+             f"{AMPLITUDE_COULEUR_DEFAUT * 100:.0f} %%)")

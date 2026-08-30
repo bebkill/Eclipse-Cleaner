@@ -85,13 +85,37 @@ def test_apply_frame_applique_le_gain():
     assert fort.astype(np.float32).mean() > faible.astype(np.float32).mean() * 1.6
 
 
+def test_apply_frame_applique_un_gain_par_canal():
+    """Un gain (r, g, b) module chaque canal independamment.
+
+    C'est le mecanisme de la stabilisation de balance
+    (photometry.solve_couleur) : apply_frame ne decide de rien, elle
+    applique le vecteur qu'on lui donne — un scalaire garde le comportement
+    historique, canaux intacts (voir le garde-fou ci-dessous).
+    """
+    img = make_frame(w=200, h=200, center=(100.0, 100.0), r=40.0, gain=0.3)
+    out = apply_frame(img, 100.0, 100.0, np.array([1.5, 1.0, 0.5]))
+    temoin = apply_frame(img, 100.0, 100.0, 1.0)
+    avant = temoin.astype(np.float32).reshape(-1, 3)
+    apres = out.astype(np.float32).reshape(-1, 3)
+    vif = avant.mean(axis=1) > 20
+    assert vif.sum() > 1000, "masque vide : l'assertion serait vacante"
+    rapports = apres[vif].mean(axis=0) / avant[vif].mean(axis=0)
+    assert abs(rapports[0] - 1.5) < 0.1
+    assert abs(rapports[1] - 1.0) < 0.05
+    assert abs(rapports[2] - 0.5) < 0.05
+
+
 def test_apply_frame_ne_corrige_pas_la_couleur():
-    """Garde-fou : la couleur ne doit jamais etre rectifiee.
+    """Garde-fou : un gain SCALAIRE ne rectifie jamais la couleur.
 
     Le filtre solaire de la premiere moitie de la sequence est un filtre
     rouge, canal bleu a 0,07 sur 255. Neutraliser cette teinte attenuait le
-    rouge d'un facteur 370 et noircissait 41% de la video. Aucun autre test
-    ne detecterait la reintroduction d'une correction de balance.
+    rouge d'un facteur 370 et noircissait 41% de la video. La stabilisation
+    de balance passe desormais par un gain par canal EXPLICITE, calcule par
+    photometry.solve_couleur et borne par elle ; apply_frame elle-meme ne
+    doit toujours rien decider de la couleur. Aucun autre test ne
+    detecterait la reintroduction d'une correction implicite.
     """
     img = make_frame(w=200, h=200, center=(100.0, 100.0), r=40.0,
                      gain=0.5, wb=(1.0, 0.10, 0.0003))

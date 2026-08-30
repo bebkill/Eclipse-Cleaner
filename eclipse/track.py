@@ -32,6 +32,34 @@ def median_filter_1d(x, k):
 rolling_median = median_filter_1d
 
 
+def reference_deflicker(x, k):
+    """Binomial 3 points puis mediane glissante. k doit etre impair.
+
+    La reference de deflicker de photometry.solve_couleur. La mediane seule
+    est transparente a une oscillation de periode 2 : la parite du centre y
+    est toujours majoritaire (16 contre 15 dans une fenetre de 31), la
+    « reference » suit alors le flicker qu'elle devait gommer — et exclure
+    le centre INVERSE le defaut (16 voisins de parite opposee contre 14)
+    au lieu de le corriger. Le binomial (x[i-1] + 2 x[i] + x[i+1]) / 4, lui,
+    annule une periode 2 exactement, quelle que soit la parite.
+
+    La mediane qui suit garde ce que le binomial ne sait pas faire : suivre
+    une marche franche (retrait du filtre solaire) sans l'etaler — le
+    binomial ne la lisse que sur les deux frames qui l'encadrent, deux
+    valeurs transitionnelles que la mediane ignore partout ailleurs — et
+    ignorer une aberration isolee, que le binomial etale sur 3 frames :
+    d'ou une fenetre utile d'au moins 7.
+
+    Bords repliques, comme median_filter_1d et pour la meme raison ; le
+    voisinage y est domine par les replicats, une oscillation n'y est donc
+    absorbee qu'a partir de k//2 frames du bord.
+    """
+    serie = np.asarray(x, dtype=np.float64)
+    p = np.pad(serie, 1, mode="edge")
+    binomial = (p[:-2] + 2.0 * p[1:-1] + p[2:]) / 4.0
+    return median_filter_1d(binomial, k)
+
+
 def savgol_1d(x, window, order):
     """Lissage de Savitzky-Golay : ajustement polynomial glissant.
 

@@ -1,7 +1,49 @@
 import numpy as np
-from eclipse.track import (median_filter_1d, savgol_1d, rolling_median,
-                           interpolate_invalid, smooth_track,
+from eclipse.track import (median_filter_1d, reference_deflicker, savgol_1d,
+                           rolling_median, interpolate_invalid, smooth_track,
                            planifie_trajectoire)
+
+
+def test_reference_deflicker_absorbe_une_alternance_de_periode_2():
+    """Une oscillation +/-a une frame sur deux doit rendre la ligne de base.
+
+    C'est le cas qui disqualifie la mediane glissante ordinaire comme
+    reference de deflicker : la parite du centre y est toujours majoritaire
+    (16 contre 15 dans une fenetre de 31), la mediane suit donc
+    l'oscillation elle-meme. Exclure le centre inverserait le defaut (16
+    voisins de parite opposee contre 14) ; c'est le binomial prealable qui
+    annule exactement la periode 2.
+    """
+    n = 200
+    x = np.where(np.arange(n) % 2 == 0, 108.0, 92.0)
+    out = reference_deflicker(x, 31)
+    interieur = out[15:n - 15]
+    assert np.allclose(interieur, 100.0)
+
+
+def test_reference_deflicker_preserve_une_marche():
+    """Un vrai changement (retrait du filtre solaire) doit rester une marche.
+
+    Le binomial n'etale la marche que sur les deux frames qui l'encadrent,
+    et la mediane ignore ces deux valeurs transitionnelles partout
+    ailleurs : seules ces deux frames-la peuvent devier des plateaux.
+    """
+    n = 100
+    x = np.concatenate([np.full(50, 10.0), np.full(50, 30.0)])
+    out = reference_deflicker(x, 31)
+    assert np.allclose(out[:49], 10.0)
+    assert np.allclose(out[51:], 30.0)
+    assert 10.0 <= out[49] <= 30.0
+    assert 10.0 <= out[50] <= 30.0
+
+
+def test_reference_deflicker_supprime_une_aberration_isolee():
+    """Le binomial etale l'aberration sur 3 frames ; il faut une fenetre
+    d'au moins 7 pour que la mediane les ignore toutes les trois."""
+    x = np.full(20, 5.0)
+    x[10] = 500.0
+    out = reference_deflicker(x, 7)
+    assert out[10] == 5.0
 
 
 def test_median_filter_supprime_une_aberration_isolee():
