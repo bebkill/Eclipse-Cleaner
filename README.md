@@ -9,6 +9,8 @@
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-yellow?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/bebkill)
 
+> 🔰 **Never used Python or a terminal?** Follow the **[guide for absolute beginners (Windows)](BEGINNERS.md)** — copy-paste only, no experience needed, no code to write.
+
 ## The story behind this project
 
 This project began with the capture of the solar eclipse of **August 12, 2026**. My equipment setup was far from ideal — people kept walking in front of my gear — but I still managed to capture the eclipse. Then I opened the video produced by my smart telescope, and my heart sank: it was unusable. Very unstable, with long masked sequences followed by tracking-recovery phases and abrupt brightness adjustments.
@@ -28,7 +30,7 @@ I tried to fix it with the tools available (SIRIL and PIPP), but I probably didn
 - **Sorts the frames** — only irreparable frames are rejected: blur, darkness, glare, failed disk localization. A badly framed frame is *not* a defective frame; the stabilizer fixes the position.
 - **Locks the solar disk to the center** — a fixed-radius directed Hough vote finds the disk even on a thin crescent, and tolerates clouds masking part of the limb.
 - **Moves the frame like a camera operator would** — the crop window is planned, bounded softly against the source edges, and absorbs the tracking re-acquisition jumps (hundreds of pixels in a single frame) instead of jerking.
-- **Normalizes exposure — luminance only.** Color is left exactly as filmed: a red solar filter stays red, a sunset stays warm.
+- **Removes auto-exposure flicker** — brightness is corrected frame by frame toward the sequence median, and white balance is stabilized toward its *own* trajectory, never toward neutral: a red solar filter stays red, a sunset stays warm, and removing the filter mid-sequence stays a real change. (`--sans-couleur` disables the color part.)
 - **Bridges short gaps** with linear interpolation, and never invents footage for long ones: a real hole stays a clean cut.
 - **A review viewer in your browser** — inspect every frame, overrule the automatic sorting with one keystroke, then re-render. Bilingual (English/French), served on 127.0.0.1 only.
 
@@ -40,6 +42,12 @@ Requires **Python 3.12+** — check with `python --version` first: on a system w
 
 ```bash
 python -m pip install git+https://github.com/bebkill/Eclipse-Cleaner.git
+```
+
+This `git+` form requires [git](https://git-scm.com/) to be installed (it usually isn't, on Windows). No git? Use the zip form instead — same result:
+
+```bash
+python -m pip install https://github.com/bebkill/Eclipse-Cleaner/archive/refs/heads/main.zip
 ```
 
 Or from a clone:
@@ -116,6 +124,9 @@ The CLI flags are in French (see [Known limitations](#known-limitations)); here 
 | `--interp-max N` | Longest gap (in frames) bridged by interpolation (default 3, `0` disables) |
 | `--interp-deplacement-max PX` | Largest window displacement across a bridged gap (default 30) |
 | `--seuil-masque F` | Minimum fraction of the light the solar mask must capture for a center measurement to be trusted (default 0.80) |
+| `--sans-couleur` | Disable white-balance stabilization (brightness stays normalized) |
+| `--couleur-fenetre N` | Window, in frames, of the stabilization tint reference (default 31) |
+| `--couleur-amplitude F` | Maximum tint correction per channel, as a fraction (default 0.25) |
 | `--dark-rel`, `--dark-abs`, `--blur-rel`, `--flare-rel`, `--conf-min`, `--ilot-min` | Sorting thresholds (darkness, blur, glare, localization confidence, minimal kept-run length) |
 | `--decisions FILE` / `--sans-decisions` | Use a specific manual-review file / ignore manual reviews entirely |
 

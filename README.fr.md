@@ -9,6 +9,8 @@
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-soutenir-yellow?logo=buymeacoffee&logoColor=white)](https://www.buymeacoffee.com/bebkill)
 
+> 🔰 **Jamais utilisé Python ni un terminal ?** Suivez le **[guide pour vrais débutants (Windows)](BEGINNERS.fr.md)** — uniquement du copier-coller, aucune expérience requise, aucun code à écrire.
+
 ## L'histoire de ce projet
 
 Ce projet a commencé avec la capture de l'éclipse solaire du **12 août 2026**. L'installation de mon matériel n'était pas idéale — des personnes passaient régulièrement devant — mais j'ai quand même pu capturer l'éclipse. Puis j'ai découvert la vidéo produite par mon smart-télescope, et j'étais dégoûté : c'était inutilisable. Très instable, avec beaucoup de séquences masquées suivies de phases de récupération du tracking et d'ajustements brutaux de luminosité.
@@ -28,7 +30,7 @@ J'ai essayé de corriger avec les outils disponibles (SIRIL et PIPP), mais je n'
 - **Trie les frames** — seules les frames irréparables sont rejetées : flou, obscurité, éblouissement, échec de localisation. Une frame décadrée n'est *pas* une frame défectueuse ; le stabilisateur corrige la position.
 - **Verrouille le disque solaire au centre** — un vote de Hough dirigé à rayon fixe trouve le disque même sur un croissant fin, et tolère qu'un nuage masque une partie du limbe.
 - **Déplace le cadre comme le ferait un cadreur** — la fenêtre de recadrage est planifiée, butée en douceur contre les bords de la source, et absorbe les sauts de ré-acquisition du tracking (des centaines de pixels en une frame) au lieu de saccader.
-- **Normalise l'exposition — la luminance seulement.** La couleur est laissée telle que filmée : un filtre solaire rouge reste rouge, un coucher de soleil reste chaud.
+- **Supprime le scintillement de l'exposition automatique** — le niveau est corrigé image par image vers la médiane de la séquence, et la balance des blancs est stabilisée vers sa *propre* trajectoire, jamais vers le neutre : un filtre solaire rouge reste rouge, un coucher de soleil reste chaud, et son retrait en cours de séquence reste un vrai changement. (`--sans-couleur` désactive la partie couleur.)
 - **Comble les coupes courtes** par interpolation linéaire, et n'invente jamais d'images pour les longues : un vrai trou reste une coupe franche.
 - **Un viewer de revue dans le navigateur** — inspecter chaque frame, corriger le tri automatique d'une touche, puis relancer le rendu. Bilingue (français/anglais), servi sur 127.0.0.1 uniquement.
 
@@ -40,6 +42,12 @@ Nécessite **Python 3.12+**. Le binaire ffmpeg est fourni par `imageio-ffmpeg` :
 
 ```bash
 python -m pip install git+https://github.com/bebkill/Eclipse-Cleaner.git
+```
+
+Cette forme `git+` nécessite que [git](https://git-scm.com/) soit installé (ce n'est généralement pas le cas sous Windows). Pas de git ? Utilisez la forme zip — même résultat :
+
+```bash
+python -m pip install https://github.com/bebkill/Eclipse-Cleaner/archive/refs/heads/main.zip
 ```
 
 Ou depuis un clone :
@@ -114,6 +122,9 @@ python -m eclipse render entree.mp4 sortie.mp4 --cache analysis.json --blur-rel 
 | `--interp-max N` | Longueur maximale d'une coupe comblée par interpolation (défaut 3, `0` désactive) |
 | `--interp-deplacement-max PX` | Déplacement maximal de la fenêtre à travers une coupe comblée (défaut 30) |
 | `--seuil-masque F` | Fraction minimale de la lumière que le masque solaire doit capturer pour qu'une mesure de centre soit crue (défaut 0,80) |
+| `--sans-couleur` | Désactive la stabilisation de la balance des blancs (la luminance reste normalisée) |
+| `--couleur-fenetre N` | Fenêtre, en images, de la référence de teinte de la stabilisation (défaut 31) |
+| `--couleur-amplitude F` | Correction de teinte maximale par canal, en fraction (défaut 0,25) |
 | `--dark-rel`, `--dark-abs`, `--blur-rel`, `--flare-rel`, `--conf-min`, `--ilot-min` | Seuils de tri (obscurité, flou, éblouissement, confiance de localisation, longueur minimale d'îlot conservé) |
 | `--decisions FICHIER` / `--sans-decisions` | Utiliser un fichier de revue manuelle donné / ignorer toute revue manuelle |
 
