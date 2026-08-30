@@ -137,6 +137,8 @@ python -m eclipse render entree.mp4 sortie.mp4 --cache analysis.json --blur-rel 
 - Le bouton **Parcourir…** du viewer a besoin d'une session graphique (il utilise la boîte de dialogue du système via `tkinter`). Sur une machine sans affichage, passez le chemin de la vidéo en argument.
 - La suite de tests est développée sous **Windows** ; quatre tests propres à Windows se sautent automatiquement sous Linux/macOS.
 
+Ce qui est à l'étude pour la suite (entrée SER, AVI brut Bayer, choix du format de sortie…) se trouve dans la [feuille de route](ROADMAP.fr.md).
+
 ## Tests
 
 ```bash

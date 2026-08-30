@@ -140,6 +140,8 @@ The CLI flags are in French (see [Known limitations](#known-limitations)); here 
 - The viewer's **Browse…** dialog needs a graphical session (it uses the system file dialog via `tkinter`). On a headless machine, pass the video path on the command line instead.
 - The test suite is developed on **Windows**; four Windows-specific tests skip themselves automatically on Linux/macOS.
 
+What's being considered next (SER input, raw Bayer AVI, choice of output format…) lives in the [roadmap](ROADMAP.md).
+
 ## Tests
 
 ```bash
