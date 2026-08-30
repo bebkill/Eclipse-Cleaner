@@ -8,6 +8,10 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Lancement manuel : construit et eprouve l'exe SANS rien publier. C'est
+  # la seule voie de verification d'un build quand la machine locale a
+  # Smart App Control actif, qui refuse tout exe non signe frais.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,6 +31,7 @@ jobs:
       - name: Smoke test
         run: python packaging/smoke_exe.py dist/eclipse-cleaner.exe
       - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
