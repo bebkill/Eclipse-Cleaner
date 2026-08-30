@@ -782,7 +782,7 @@ try {
              (voir viewer._regle_couleur) et que min/max des champs. -->
         <summary data-t="couleur_parametres_titre">parametres</summary>
         <label data-t-title="couleur_fenetre_infobulle"
-               title="Largeur, en images, de la reference de teinte : courte suit les changements rapides, longue les ignore. Typique : 31 - min 1, max 9999"><span data-t="couleur_fenetre">fenetre (images)</span>
+               title="Largeur, en images, de la reference de teinte : courte suit les changements rapides, longue les ignore. Typique : 31 - min 1, max : le nombre d'images de la sequence"><span data-t="couleur_fenetre">fenetre (images)</span>
           <input type="number" id="couleur-fenetre" min="1" max="9999" step="2"></label>
         <label data-t-title="couleur_amplitude_infobulle"
                title="Correction de teinte maximale par canal, en fraction. Typique : 0,25 (= 25 %) - min 0 (aucune correction), max 1"><span data-t="couleur_amplitude">correction max</span>
@@ -1829,6 +1829,17 @@ async function chargeFrames() {
   // forme « aucune source » de la reponse — tout reste cache.
   elCouleurActif.parentElement.hidden =
     etatsEtapes.rendu === "indisponible" || !d.couleur;
+  // Le plafond du champ « fenetre » suit la source : au-dela du nombre
+  // d'images, la reference sature (voir track.reference_deflicker) et
+  // grandir la fenetre ne change plus rien — autant que le champ le dise.
+  // Le compte exact n'existe que sur la forme prete ; l'estimation sert de
+  // repli sur l'autre. C'est un plafond d'INTERFACE : le serveur garde le
+  // sien (9999), et une valeur deja enregistree au-dessus du plafond de la
+  // source courante reste affichee telle quelle — elle fonctionne, elle
+  // sature, et la reduire en douce mentirait sur ce que le rendu applique.
+  fenetreMax = Math.max(1, Math.min(9999,
+    (d.pret ? d.frames.length : d.nb_frames_estime) || 9999));
+  elCouleurFenetre.max = fenetreMax;
   if (d.couleur) peintCouleur(d.couleur);
   else elCouleurReglages.hidden = true;
   if (d.pret) {
@@ -2276,6 +2287,9 @@ elLancerRendu.addEventListener("click",
 // atteindre le descripteur du rendu, pas seulement l'ecran. Le dernier etat
 // confirme sert de point de retour quand une saisie est invalide ou refusee.
 let couleurServeur = null;
+// Plafond d'interface du champ « fenetre », recale sur la source a chaque
+// chargeFrames ; 9999 (le plafond du serveur) tant qu'aucune source n'a parle.
+let fenetreMax = 9999;
 
 function peintCouleur(c) {
   couleurServeur = c;
@@ -2292,9 +2306,10 @@ async function envoieCouleur() {
   const fenetre = Number(elCouleurFenetre.value);
   const amplitude = Number(elCouleurAmplitude.value);
   const corps = { actif: elCouleurActif.checked, fenetre, amplitude };
-  // Meme validation que le serveur : un champ vide ou hors bornes revient
-  // au dernier etat confirme plutot que de partir en 400.
-  if (!Number.isInteger(fenetre) || fenetre < 1 || fenetre > 9999
+  // Meme validation que le serveur, en plus strict sur la fenetre (le
+  // plafond d'interface suit la source, voir fenetreMax) : un champ vide ou
+  // hors bornes revient au dernier etat confirme plutot que de partir en 400.
+  if (!Number.isInteger(fenetre) || fenetre < 1 || fenetre > fenetreMax
       || !(amplitude >= 0 && amplitude <= 1)) {
     if (couleurServeur) peintCouleur(couleurServeur);
     return;

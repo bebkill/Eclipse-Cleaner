@@ -14,7 +14,7 @@
  "option_couleur_infobulle": "Corrige les oscillations de balance des blancs de l'exposition automatique ; la teinte réellement filmée est conservée. La luminosité, elle, est toujours normalisée.",
  "couleur_parametres_titre": "paramètres",
  "couleur_fenetre": "fenêtre (images)",
- "couleur_fenetre_infobulle": "Largeur, en images, de la référence de teinte : courte, elle suit les changements rapides ; longue, elle les ignore. Typique : 31 — min 1, max 9999",
+ "couleur_fenetre_infobulle": "Largeur, en images, de la référence de teinte : courte, elle suit les changements rapides ; longue, elle les ignore. Typique : 31 — min 1, max : le nombre d'images de la séquence",
  "couleur_amplitude": "correction max",
  "couleur_amplitude_infobulle": "Correction de teinte maximale par canal, en fraction. Typique : 0,25 (= 25 %) — min 0 (aucune correction), max 1",
  "filtres_titre": "Ne parcourir que",
