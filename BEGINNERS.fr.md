@@ -6,6 +6,20 @@ Jamais utilisé Python ? Jamais tapé une commande ? Cette page est pour vous.
 
 D'abord, rassurez-vous : **vous n'écrirez aucun code, et il n'y a aucun script à créer.** Eclipse Cleaner est un programme tout prêt. Il suffit de l'installer une fois en copiant-collant deux commandes, puis tout se passe dans votre navigateur web, avec des boutons. Comptez une dizaine de minutes pour l'installation.
 
+## Le raccourci — un programme Windows tout prêt, sans Python du tout
+
+Si vous voulez simplement que ça marche, les étapes ci-dessous ne sont même pas nécessaires :
+
+1. Ouvrez la [dernière release](https://github.com/bebkill/Eclipse-Cleaner/releases/latest) et, sous **Assets**, téléchargez le fichier se terminant par `-windows-x64.exe`.
+2. Enregistrez-le n'importe où (le Bureau convient très bien) et **double-cliquez dessus**. Le premier démarrage prend un petit moment — le programme se décompresse — puis Eclipse Cleaner s'ouvre dans votre navigateur.
+
+Deux choses à savoir, toutes deux normales :
+
+- **Windows SmartScreen** peut afficher *« Windows a protégé votre ordinateur »* : cela signifie simplement que le programme n'est pas signé avec un certificat d'éditeur payant. Cliquez sur **Informations complémentaires**, puis **Exécuter quand même**. Il ne le demande qu'une fois.
+- Une **fenêtre noire** s'ouvre à côté du navigateur : c'est le programme lui-même, qui affiche sa progression. La fermer arrête Eclipse Cleaner.
+
+C'est toute l'installation. Tout ce que décrit [l'utilisation dans le README](README.fr.md#utilisation) s'applique tel quel — vous pouvez arrêter votre lecture ici. La suite de cette page est la voie classique par Python, qui fonctionne aussi sous macOS et Linux et rend les mises à jour plus légères à télécharger.
+
 ## Étape 1 — Installer Python (une seule fois)
 
 Python est le logiciel gratuit sur lequel tourne Eclipse Cleaner. Le plus simple sous Windows 10/11 est le Microsoft Store — aucune option à ne pas rater :

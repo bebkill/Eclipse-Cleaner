@@ -38,7 +38,9 @@ Everything adapts to your video: resolution, aspect ratio, frame rate and appare
 
 ## Installation
 
-Requires **Python 3.12+** — check with `python --version` first: on a system whose default `python` is older (Homebrew, some Linux distros), the install fails with an unrelated-looking dependency error rather than a clear version message. The ffmpeg binary is bundled through `imageio-ffmpeg`: nothing else to install on your system.
+**On Windows you can skip Python entirely**: each release ships a standalone `eclipse-cleaner-…-windows-x64.exe` — download it from the [latest release](https://github.com/bebkill/Eclipse-Cleaner/releases/latest) and double-click. Details (and the SmartScreen warning to expect) in [the beginners guide](BEGINNERS.md#the-shortcut--a-ready-made-windows-program-no-python-at-all).
+
+Otherwise: requires **Python 3.12+** — check with `python --version` first: on a system whose default `python` is older (Homebrew, some Linux distros), the install fails with an unrelated-looking dependency error rather than a clear version message. The ffmpeg binary is bundled through `imageio-ffmpeg`: nothing else to install on your system.
 
 ```bash
 python -m pip install git+https://github.com/bebkill/Eclipse-Cleaner.git

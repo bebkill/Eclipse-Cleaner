@@ -1,0 +1,40 @@
+name: Release
+
+# A chaque tag v*, construit l'executable Windows autonome (PyInstaller,
+# onefile), le verifie par packaging/smoke_exe.py, puis l'attache a la
+# release du tag — creee en BROUILLON si elle n'existe pas encore : les
+# notes se redigent a la main, la CI ne publie rien toute seule.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  exe-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: python -m pip install . pyinstaller
+      - name: Build (onefile)
+        run: pyinstaller --noconfirm packaging/eclipse-cleaner.spec
+      - name: Smoke test
+        run: python packaging/smoke_exe.py dist/eclipse-cleaner.exe
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $asset = "eclipse-cleaner-$tag-windows-x64.exe"
+          Copy-Item dist/eclipse-cleaner.exe $asset
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --title $tag --notes "(brouillon cree par la CI pour porter l'executable Windows — notes a rediger avant publication)"
+          }
+          gh release upload $tag $asset --clobber

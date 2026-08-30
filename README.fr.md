@@ -38,7 +38,9 @@ Tout s'adapte à votre vidéo : résolution, format, cadence et rayon apparent d
 
 ## Installation
 
-Nécessite **Python 3.12+**. Le binaire ffmpeg est fourni par `imageio-ffmpeg` : rien d'autre à installer sur le système.
+**Sous Windows, Python n'est même pas nécessaire** : chaque release fournit un exécutable autonome `eclipse-cleaner-…-windows-x64.exe` — téléchargez-le depuis la [dernière release](https://github.com/bebkill/Eclipse-Cleaner/releases/latest) et double-cliquez. Détails (et avertissement SmartScreen à prévoir) dans [le guide débutants](BEGINNERS.fr.md#le-raccourci--un-programme-windows-tout-prêt-sans-python-du-tout).
+
+Sinon : nécessite **Python 3.12+**. Le binaire ffmpeg est fourni par `imageio-ffmpeg` : rien d'autre à installer sur le système.
 
 ```bash
 python -m pip install git+https://github.com/bebkill/Eclipse-Cleaner.git
