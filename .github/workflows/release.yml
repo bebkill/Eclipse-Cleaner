@@ -33,8 +33,13 @@ jobs:
           $tag = "${{ github.ref_name }}"
           $asset = "eclipse-cleaner-$tag-windows-x64.exe"
           Copy-Item dist/eclipse-cleaner.exe $asset
+          # L'empreinte publiee a cote de l'exe : le seul moyen pour un
+          # utilisateur de verifier que son telechargement est bien celui
+          # construit ici, tant que l'exe n'est pas signe.
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Encoding ascii "$asset.sha256" "$hash  $asset"
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --draft --title $tag --notes "(brouillon cree par la CI pour porter l'executable Windows — notes a rediger avant publication)"
           }
-          gh release upload $tag $asset --clobber
+          gh release upload $tag $asset "$asset.sha256" --clobber

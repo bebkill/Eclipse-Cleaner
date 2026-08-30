@@ -13,10 +13,13 @@ Si vous voulez simplement que ça marche, les étapes ci-dessous ne sont même p
 1. Ouvrez la [dernière release](https://github.com/bebkill/Eclipse-Cleaner/releases/latest) et, sous **Assets**, téléchargez le fichier se terminant par `-windows-x64.exe`.
 2. Enregistrez-le n'importe où (le Bureau convient très bien) et **double-cliquez dessus**. Le premier démarrage prend un petit moment — le programme se décompresse — puis Eclipse Cleaner s'ouvre dans votre navigateur.
 
-Deux choses à savoir, toutes deux normales :
+**Windows va se méfier — c'est attendu.** Le programme n'est pas signé avec un certificat d'éditeur payant, et un fichier tout juste publié n'a encore aucune « réputation » : Windows le traite donc durement. Vous pouvez passer outre en confiance : le programme est open source, ce fichier précis est construit publiquement par la CI du projet à partir du code source du tag, son empreinte SHA-256 est publiée juste à côté dans la release, et l'analyse Windows Defender ne trouve rien. Selon l'endroit où Windows vous arrête :
 
-- **Windows SmartScreen** peut afficher *« Windows a protégé votre ordinateur »* : cela signifie simplement que le programme n'est pas signé avec un certificat d'éditeur payant. Cliquez sur **Informations complémentaires**, puis **Exécuter quand même**. Il ne le demande qu'une fois.
-- Une **fenêtre noire** s'ouvre à côté du navigateur : c'est le programme lui-même, qui affiche sa progression. La fermer arrête Eclipse Cleaner.
+- **Dans le navigateur, au téléchargement** (Edge : *« … a été bloqué car il pourrait endommager votre appareil »*) : cliquez sur le menu **…** du téléchargement, puis **Conserver** → **Afficher plus** → **Conserver quand même**.
+- **Au premier lancement** (*« Windows a protégé votre ordinateur »*) : cliquez sur **Informations complémentaires**, puis **Exécuter quand même**. Il ne le demande qu'une fois.
+- **Si aucun de ces boutons n'apparaît** : clic droit sur le fichier téléchargé → **Propriétés** → cochez **Débloquer** en bas → **OK**, puis double-cliquez à nouveau. (Si cette case n'existe pas non plus, une stratégie d'entreprise sur votre PC interdit les programmes non signés — passez par la voie Python ci-dessous.)
+
+Encore une chose à savoir : une **fenêtre noire** s'ouvre à côté du navigateur. C'est le programme lui-même, qui affiche sa progression. La fermer arrête Eclipse Cleaner.
 
 C'est toute l'installation. Tout ce que décrit [l'utilisation dans le README](README.fr.md#utilisation) s'applique tel quel — vous pouvez arrêter votre lecture ici. La suite de cette page est la voie classique par Python, qui fonctionne aussi sous macOS et Linux et rend les mises à jour plus légères à télécharger.
 
