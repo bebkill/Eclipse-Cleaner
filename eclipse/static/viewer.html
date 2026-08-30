@@ -480,9 +480,15 @@
   #couleur-reglages summary { cursor: pointer; }
   #couleur-reglages summary:hover { color: var(--texte); }
   #couleur-reglages label {
-    display: inline-flex; align-items: center; gap: 6px;
-    margin: 6px 14px 0 0;
+    display: flex; align-items: center; gap: 8px;
+    margin: 6px 0 0;
   }
+  /* Colonne de libelles a largeur fixe : les deux champs s'alignent
+     verticalement au lieu de suivre chacun la longueur de son texte.
+     9em couvre le plus long des deux libelles dans les deux langues
+     (« fenetre (images) » / "window (frames)") ; un libelle plus long
+     deborderait la colonne sans casser l'alignement des champs. */
+  #couleur-reglages label span { flex: 0 0 9em; }
   #couleur-reglages input {
     width: 70px; font: inherit; color: var(--texte);
     background: var(--fond); border: 1px solid var(--bord-fort);
