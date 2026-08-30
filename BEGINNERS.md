@@ -17,9 +17,12 @@ If you just want it to work, you don't even need the steps below:
 
 - **In your browser, at download time** (Edge: *"… was blocked because it could harm your device"*): click the **…** menu on the download, then **Keep** → **Show more** → **Keep anyway**.
 - **At first launch** (*"Windows protected your PC"*): click **More info**, then **Run anyway**. It only asks once.
-- **If no such button appears anywhere**: right-click the downloaded file → **Properties** → tick **Unblock** at the bottom → **OK**, then double-click again. (If that checkbox doesn't exist either, a company policy on your PC forbids unsigned programs — use the Python route below instead.)
+- **If no such button appears anywhere**: right-click the downloaded file → **Properties** → tick **Unblock** at the bottom → **OK**, then double-click again.
+- **If it still won't run**: open **Windows Security → App & browser control**. If **Smart App Control** is *On* (the default on recent Windows 11 PCs), Windows refuses every unsigned program outright, with no way to allow just one — until this program is code-signed, use the Python route below instead: it is not affected.
 
 One more thing to know: a **black window** opens alongside your browser. That's the program itself, showing its progress. Closing it stops Eclipse Cleaner.
+
+**To uninstall**: delete the exe file — nothing else is installed on your system. The work files (`analysis.json`, `decisions.json`, a thumbnail folder, the cleaned video) are created next to your source video; delete them too if you wish.
 
 That's the whole installation. Everything from [Usage in the README](README.md#usage) applies as-is — you can stop reading here. The rest of this page is the classic route through Python, which also works on macOS and Linux and makes updates lighter to download.
 

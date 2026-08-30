@@ -17,9 +17,12 @@ Si vous voulez simplement que ça marche, les étapes ci-dessous ne sont même p
 
 - **Dans le navigateur, au téléchargement** (Edge : *« … a été bloqué car il pourrait endommager votre appareil »*) : cliquez sur le menu **…** du téléchargement, puis **Conserver** → **Afficher plus** → **Conserver quand même**.
 - **Au premier lancement** (*« Windows a protégé votre ordinateur »*) : cliquez sur **Informations complémentaires**, puis **Exécuter quand même**. Il ne le demande qu'une fois.
-- **Si aucun de ces boutons n'apparaît** : clic droit sur le fichier téléchargé → **Propriétés** → cochez **Débloquer** en bas → **OK**, puis double-cliquez à nouveau. (Si cette case n'existe pas non plus, une stratégie d'entreprise sur votre PC interdit les programmes non signés — passez par la voie Python ci-dessous.)
+- **Si aucun de ces boutons n'apparaît** : clic droit sur le fichier téléchargé → **Propriétés** → cochez **Débloquer** en bas → **OK**, puis double-cliquez à nouveau.
+- **Si ça ne se lance toujours pas** : ouvrez **Sécurité Windows → Contrôle des applications et du navigateur**. Si **Smart App Control** est *Activé* (le réglage d'usine des PC Windows 11 récents), Windows refuse catégoriquement tout programme non signé, sans exception possible — tant que ce programme n'est pas signé, passez par la voie Python ci-dessous : elle n'est pas concernée.
 
 Encore une chose à savoir : une **fenêtre noire** s'ouvre à côté du navigateur. C'est le programme lui-même, qui affiche sa progression. La fermer arrête Eclipse Cleaner.
+
+**Pour désinstaller** : supprimez le fichier exe — rien d'autre n'est installé sur votre système. Les fichiers de travail (`analysis.json`, `decisions.json`, un dossier de vignettes, la vidéo nettoyée) sont créés à côté de votre vidéo source ; supprimez-les aussi si vous le souhaitez.
 
 C'est toute l'installation. Tout ce que décrit [l'utilisation dans le README](README.fr.md#utilisation) s'applique tel quel — vous pouvez arrêter votre lecture ici. La suite de cette page est la voie classique par Python, qui fonctionne aussi sous macOS et Linux et rend les mises à jour plus légères à télécharger.
 
