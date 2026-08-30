@@ -1,0 +1,105 @@
+# Eclipse Cleaner — guide pour vrais débutants (Windows)
+
+**[🇬🇧 English version](BEGINNERS.md)**
+
+Jamais utilisé Python ? Jamais tapé une commande ? Cette page est pour vous.
+
+D'abord, rassurez-vous : **vous n'écrirez aucun code, et il n'y a aucun script à créer.** Eclipse Cleaner est un programme tout prêt. Il suffit de l'installer une fois en copiant-collant deux commandes, puis tout se passe dans votre navigateur web, avec des boutons. Comptez une dizaine de minutes pour l'installation.
+
+## Étape 1 — Installer Python (une seule fois)
+
+Python est le logiciel gratuit sur lequel tourne Eclipse Cleaner. Le plus simple sous Windows 10/11 est le Microsoft Store — aucune option à ne pas rater :
+
+1. Cliquez sur le bouton **Démarrer** et tapez `Microsoft Store`, puis ouvrez-le.
+2. Dans la barre de recherche du Store, tapez `Python 3.13`.
+3. Choisissez l'application nommée **Python 3.13** publiée par la *Python Software Foundation*, et cliquez sur **Obtenir** (ou **Installer**).
+4. Attendez la fin de l'installation, puis fermez le Store.
+
+*(Alternative pour ceux qui préfèrent l'installateur classique de [python.org](https://www.python.org/downloads/) : sur le tout premier écran, cochez la case **« Add python.exe to PATH »** avant de cliquer sur Install. Si vous oubliez cette case, Windows ne trouvera pas Python ensuite.)*
+
+## Étape 2 — Ouvrir un terminal
+
+Le « terminal », c'est simplement une fenêtre où l'on tape (ou colle) des commandes. Windows en a déjà un :
+
+1. Cliquez sur le bouton **Démarrer** et tapez `terminal`.
+2. Ouvrez l'application appelée **Terminal** (ou **Windows PowerShell** — les deux conviennent).
+
+Une fenêtre sombre s'ouvre avec un curseur qui clignote. Voilà — vous êtes prêt.
+
+**Comment exécuter une commande :** chaque cadre gris de cette page a une petite icône de copie dans son coin supérieur droit (sur le site GitHub). Cliquez dessus, revenez dans la fenêtre du terminal, appuyez sur **Ctrl+V** pour coller (un simple clic droit colle aussi dans le terminal), puis appuyez sur **Entrée**. Une « commande », ce n'est rien de plus.
+
+## Étape 3 — Vérifier que Python répond
+
+Collez ceci dans le terminal et appuyez sur Entrée :
+
+```
+python --version
+```
+
+- S'il répond quelque chose comme `Python 3.13.2` (n'importe quel numéro **3.12 ou plus**), parfait — passez à l'étape 4.
+- Si une fenêtre du Microsoft Store s'ouvre à la place, ou si vous obtenez *« 'python' n'est pas reconnu »*, Python n'est pas encore installé : retournez à l'étape 1.
+- S'il répond un numéro **inférieur à 3.12**, installez la version actuelle depuis le Store (étape 1) ; elle prendra le relais.
+
+## Étape 4 — Installer Eclipse Cleaner (une seule fois)
+
+Collez cette commande et appuyez sur Entrée :
+
+```
+python -m pip install https://github.com/bebkill/Eclipse-Cleaner/archive/refs/heads/main.zip
+```
+
+Des lignes vont défiler pendant une minute ou deux — c'est normal, ça télécharge. Les lignes jaunes de type *warning* sont sans gravité. À la fin, les dernières lignes disent **`Successfully installed …`**.
+
+## Étape 5 — Lancer Eclipse Cleaner
+
+Collez cette commande et appuyez sur Entrée :
+
+```
+python -m eclipse viewer
+```
+
+Une page s'ouvre dans votre navigateur web. À partir de là, plus aucune commande — tout se fait avec des boutons :
+
+1. Cliquez sur **Parcourir…** et choisissez votre vidéo d'éclipse.
+2. Lancez les trois étapes affichées sur la page : extraire les vignettes, analyser les frames, produire la vidéo finale.
+3. La vidéo nettoyée est écrite **à côté de votre originale**, avec `-clean` ajouté à son nom (ex. `moneclipse-clean.mp4`).
+
+Gardez la fenêtre du terminal ouverte pendant que vous utilisez Eclipse Cleaner — c'est le moteur qui tourne derrière la page. Quand vous avez terminé, fermez simplement l'onglet du navigateur et la fenêtre du terminal.
+
+## Toutes les fois suivantes
+
+Une seule chose à faire : ouvrir un terminal (étape 2) et coller :
+
+```
+python -m eclipse viewer
+```
+
+## Pour mettre à jour Eclipse Cleaner plus tard
+
+Collez cette commande (c'est celle de l'étape 4 plus `--force-reinstall`, qui garantit que la dernière version remplace bien l'ancienne) :
+
+```
+python -m pip install --force-reinstall https://github.com/bebkill/Eclipse-Cleaner/archive/refs/heads/main.zip
+```
+
+## Bonus — ouvrir un terminal directement dans un dossier
+
+Ce n'est pas nécessaire pour le viewer (le bouton **Parcourir…** trouve votre vidéo pour vous), mais c'est pratique si vous essayez plus tard le mode ligne de commande décrit dans le [README](README.fr.md) :
+
+1. Ouvrez l'**Explorateur de fichiers** et naviguez jusqu'au dossier contenant votre vidéo.
+2. Faites un clic droit sur une zone vide du dossier et choisissez **« Ouvrir dans le Terminal »**.
+
+Le terminal s'ouvre déjà « dans » ce dossier : vous pouvez alors désigner vos fichiers par leur simple nom.
+
+## Si quelque chose ne va pas
+
+| Symptôme | Solution |
+|---|---|
+| *« 'python' n'est pas reconnu »* ou le Store s'ouvre | Python n'est pas installé — faites l'étape 1. Si vous avez utilisé l'installateur python.org, relancez-le et cochez **« Add python.exe to PATH »**. |
+| *« 'pip' n'est pas reconnu »* | Tapez toujours `python -m pip …` (comme sur cette page), jamais `pip` tout seul. |
+| Des lignes d'erreur rouges à l'étape 4 | Vérifiez votre connexion internet et relancez la commande. Si ça persiste, vérifiez que `python --version` donne 3.12 ou plus. |
+| La page ne s'ouvre pas dans le navigateur | Regardez dans le terminal : il affiche une adresse commençant par `http://127.0.0.1` — copiez-la dans la barre d'adresse de votre navigateur. |
+
+Toujours bloqué ? Ouvrez une [issue](https://github.com/bebkill/Eclipse-Cleaner/issues) en décrivant ce que vous avez fait et ce que le terminal a répondu — les questions de débutants sont bienvenues.
+
+Ciel dégagé ! 🌘
