@@ -1,0 +1,27 @@
+name: Feature request / Proposition d'amélioration
+description: Suggest an idea for the project. / Proposez une idée pour le projet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas and suggestions are very welcome, in **English or French**.
+        Les idées et suggestions sont les bienvenues, en **anglais ou en français**.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve? / Quel problème cela résoudrait-il ?
+      description: Describe the situation, ideally with a real video in mind. / Décrivez la situation, idéalement à partir d'une vraie vidéo.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen? / Que souhaiteriez-vous ?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / Alternatives envisagées
+      description: Other tools or workarounds you tried. / Autres outils ou contournements essayés.

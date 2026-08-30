@@ -1,0 +1,44 @@
+name: Bug report / Rapport de bug
+description: Something doesn't work as expected. / Quelque chose ne fonctionne pas comme prévu.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! You can write in **English or French**.
+        Merci de prendre le temps de signaler un bug ! Vous pouvez écrire en **anglais ou en français**.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / Que s'est-il passé ?
+      description: Also tell us what you expected to happen. / Décrivez aussi ce que vous attendiez.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output / Commande et sortie
+      description: The exact command you ran (or the viewer step) and its full output. / La commande exacte (ou l'étape du viewer) et sa sortie complète.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version / Version de Python
+      description: Output of `python --version`
+      placeholder: "Python 3.12.4"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system / Système d'exploitation
+      placeholder: "Windows 11 / Ubuntu 24.04 / macOS 15…"
+    validations:
+      required: true
+  - type: textarea
+    id: video
+    attributes:
+      label: Source video / Vidéo source
+      description: Resolution, frame rate, duration, and roughly what happens in it (clouds, filter removal, tracking loss…). A short sample clip helps a lot — only share footage you have the rights to. / Résolution, cadence, durée, et ce qui s'y passe (nuages, retrait du filtre, perte de suivi…). Un court extrait aide beaucoup — ne partagez que des images dont vous avez les droits.
