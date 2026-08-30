@@ -1,6 +1,6 @@
 [project]
 name = "eclipse-cleaner"
-version = "1.1.2"
+version = "1.2.0"
 description = "Clean up and stabilize a shaky solar-eclipse timelapse: drop broken frames, lock the solar disk to the center, normalize exposure"
 readme = "README.md"
 license = "MIT"

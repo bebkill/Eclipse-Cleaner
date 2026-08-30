@@ -4,4 +4,4 @@
 #: correspondant : c'est ce qui rend le numero affiche dans le viewer
 #: verifiable dans l'arbre git. pyproject.toml porte la meme valeur, et un
 #: test le garde -- deux declarations qui divergent valent moins qu'une.
-__version__ = "1.1.2"
+__version__ = "1.2.0"
