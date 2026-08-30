@@ -469,6 +469,26 @@
   label.filtre[hidden] { display: none; }
   label.filtre input { cursor: pointer; accent-color: var(--accent); }
 
+  /* -- reglages de la stabilisation de couleur : depliable, meme garde
+     [hidden] explicite que label.filtre et pour la meme raison (la regle
+     display battrait sinon le style navigateur de l'attribut). -- */
+  #couleur-reglages {
+    font-size: 12.5px; color: var(--texte-faible);
+    margin: 2px 0 0 22px;            /* aligne sous le texte de la case */
+  }
+  #couleur-reglages[hidden] { display: none; }
+  #couleur-reglages summary { cursor: pointer; }
+  #couleur-reglages summary:hover { color: var(--texte); }
+  #couleur-reglages label {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 6px 14px 0 0;
+  }
+  #couleur-reglages input {
+    width: 70px; font: inherit; color: var(--texte);
+    background: var(--fond); border: 1px solid var(--bord-fort);
+    border-radius: 4px; padding: 2px 5px;
+  }
+
   /* -- aide clavier : repliee par defaut. C'est le sacrifice vertical
      assume de cette mise en page. C'est de la documentation, et chaque
      raccourci sauf les fleches et +/- est deja rappele dans l'infobulle de
@@ -741,6 +761,22 @@ try {
       <button id="lancer-analyse" hidden>2. Analyser les images</button>
       <button id="lancer-rendu" hidden>3. Produire la video finale</button>
       <label class="filtre" hidden><input type="checkbox" id="rendu-png"> <span data-t="option_png">exporter aussi la sequence PNG</span></label>
+      <label class="filtre" hidden data-t-title="option_couleur_infobulle"
+             title="Corrige les oscillations de balance des blancs de l'exposition automatique ; la teinte reellement filmee est conservee. La luminosite, elle, est toujours normalisee."><input type="checkbox" id="couleur-actif" checked> <span data-t="option_couleur">stabiliser la couleur</span></label>
+      <!-- Depliable, et cachee tant que la stabilisation n'est pas active :
+           deux champs de reglage fin n'ont rien a faire sous les yeux de
+           qui n'a pas coche la case, et la page est deja dense. AUCUN
+           reglage n'est envoye a l'ouverture/fermeture du <details> : seul
+           un changement de valeur parle au serveur. -->
+      <details id="couleur-reglages" hidden>
+        <summary data-t="couleur_reglages_titre">reglages de la stabilisation</summary>
+        <label data-t-title="couleur_fenetre_infobulle"
+               title="Largeur, en images, de la reference de teinte : court suit les changements rapides, long les ignore"><span data-t="couleur_fenetre">fenetre (images)</span>
+          <input type="number" id="couleur-fenetre" min="1" max="9999" step="2"></label>
+        <label data-t-title="couleur_amplitude_infobulle"
+               title="Correction de teinte maximale par canal, en fraction (0,25 = 25 %)"><span data-t="couleur_amplitude">correction max</span>
+          <input type="number" id="couleur-amplitude" min="0" max="1" step="0.05"></label>
+      </details>
     </div>
   </section>
 
@@ -1591,6 +1627,10 @@ const elLancerVignettes = document.getElementById("lancer-vignettes");
 const elLancerAnalyse = document.getElementById("lancer-analyse");
 const elLancerRendu = document.getElementById("lancer-rendu");
 const elRenduPng = document.getElementById("rendu-png");
+const elCouleurActif = document.getElementById("couleur-actif");
+const elCouleurReglages = document.getElementById("couleur-reglages");
+const elCouleurFenetre = document.getElementById("couleur-fenetre");
+const elCouleurAmplitude = document.getElementById("couleur-amplitude");
 const elAvancement = document.getElementById("avancement");
 const elAvancementGenre = document.getElementById("avancement-genre");
 const elBarre = document.getElementById("barre");
@@ -1772,6 +1812,14 @@ async function chargeFrames() {
   // vignettes rend le rendu possible — il lit le cache, pas les .jpg — et
   // la source n'est pourtant pas prete.
   elRenduPng.parentElement.hidden = etatsEtapes.rendu === "indisponible";
+  // Les controles de couleur sont, comme la case PNG, l'option de l'etape
+  // 3 : ils suivent sa disponibilite. Les valeurs viennent du serveur (le
+  // porteur est leur seule verite, voir /api/couleur) ; sans elles — la
+  // forme « aucune source » de la reponse — tout reste cache.
+  elCouleurActif.parentElement.hidden =
+    etatsEtapes.rendu === "indisponible" || !d.couleur;
+  if (d.couleur) peintCouleur(d.couleur);
+  else elCouleurReglages.hidden = true;
   if (d.pret) {
     etat.frames = d.frames; etat.fps = d.fps;
     vaVers(0);
@@ -1915,6 +1963,12 @@ function majZoneLancement() {
   }
   // L'option de l'etape 3 suit l'etape 3, pour les deux raisons a la fois.
   elRenduPng.disabled = tacheEnCours || etatsEtapes.rendu === "indisponible";
+  // Les controles de couleur aussi : un rendu parti a saisi sa copie des
+  // reglages (voir viewer._travail_rendu), changer les champs pendant qu'il
+  // tourne ne changerait que le rendu suivant -- on eteint plutot que de
+  // laisser croire a un effet immediat.
+  for (const champ of [elCouleurActif, elCouleurFenetre, elCouleurAmplitude])
+    champ.disabled = tacheEnCours || etatsEtapes.rendu === "indisponible";
   // Changer de source pendant une tache est refuse par le serveur (409, voir
   // _change_source) : on eteint le bouton plutot que de laisser cliquer dans
   // un refus.
@@ -2205,6 +2259,62 @@ elLancerVignettes.addEventListener("click", () => {
 elLancerAnalyse.addEventListener("click", () => lance("analyse", {}));
 elLancerRendu.addEventListener("click",
   () => lance("rendu", { png: elRenduPng.checked }));
+
+// -- Stabilisation de la couleur : la case et ses reglages parlent au
+// serveur (POST /api/couleur), qui est leur seule verite -- le reglage doit
+// atteindre le descripteur du rendu, pas seulement l'ecran. Le dernier etat
+// confirme sert de point de retour quand une saisie est invalide ou refusee.
+let couleurServeur = null;
+
+function peintCouleur(c) {
+  couleurServeur = c;
+  elCouleurActif.checked = c.actif;
+  elCouleurFenetre.value = c.fenetre;
+  elCouleurAmplitude.value = c.amplitude;
+  // La section depliable n'existe que si la fonction est active : deux
+  // champs de reglage fin n'ont rien a faire sous les yeux de qui ne l'a
+  // pas cochee. Son etat plie/deplie, lui, appartient a l'utilisateur.
+  elCouleurReglages.hidden = !c.actif || elCouleurActif.parentElement.hidden;
+}
+
+async function envoieCouleur() {
+  const fenetre = Number(elCouleurFenetre.value);
+  const amplitude = Number(elCouleurAmplitude.value);
+  const corps = { actif: elCouleurActif.checked, fenetre, amplitude };
+  // Meme validation que le serveur : un champ vide ou hors bornes revient
+  // au dernier etat confirme plutot que de partir en 400.
+  if (!Number.isInteger(fenetre) || fenetre < 1 || fenetre > 9999
+      || !(amplitude >= 0 && amplitude <= 1)) {
+    if (couleurServeur) peintCouleur(couleurServeur);
+    return;
+  }
+  let r;
+  try {
+    r = await fetch("/api/couleur", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corps),
+    });
+  } catch {
+    return signaleServeurInjoignable();
+  }
+  if (!r.ok) {
+    if (couleurServeur) peintCouleur(couleurServeur);
+    return;
+  }
+  // Recharger, et pas seulement repeindre : le changement perime le rendu
+  // existant, et c'est chargeFrames qui rapporte l'etat « a refaire » du
+  // bandeau -- en meme temps que les reglages confirmes par le serveur.
+  chargeFrames();
+}
+
+elCouleurActif.addEventListener("change", () => {
+  // La section suit la case sans attendre le serveur : c'est un pur etat
+  // d'affichage, et le rechargement qui suit la reconfirmera.
+  elCouleurReglages.hidden = !elCouleurActif.checked;
+  envoieCouleur();
+});
+elCouleurFenetre.addEventListener("change", envoieCouleur);
+elCouleurAmplitude.addEventListener("change", envoieCouleur);
 elAnnuler.addEventListener("click",
   () => fetch("/api/tache", { method: "DELETE" })
           .catch(signaleServeurInjoignable));

@@ -69,7 +69,7 @@ def _json_natif(valeur):
     return valeur
 
 
-def _reglages(seuils, tolerance_bord, seuil_masque, cadrage):
+def _reglages(seuils, tolerance_bord, seuil_masque, cadrage, couleur):
     """Ce qui, hors decisions et hors cache, determine le rendu produit.
 
     UN SEUL constructeur, appele des deux cotes : l'ecriture du descripteur
@@ -77,10 +77,37 @@ def _reglages(seuils, tolerance_bord, seuil_masque, cadrage):
     constructeurs se desynchroniseraient au premier reglage ajoute, et le
     symptome — « a refaire » perpetuel — ressemble a un fonctionnement
     normal.
+
+    couleur : les reglages de stabilisation de balance, TOUJOURS
+    materialises (defauts compris, voir _couleur_normalisee) et jamais un
+    dictionnaire creux : « valeur par defaut » et « valeur explicitement
+    egale au defaut » doivent produire le meme descripteur, sans quoi
+    toucher la case de la page sans rien changer dirait « a refaire ».
     """
     return _json_natif({"seuils": seuils, "tolerance_bord": tolerance_bord,
                         "seuil_masque": seuil_masque,
-                        "cadrage": cadrage or {}})
+                        "cadrage": cadrage or {},
+                        "couleur": couleur})
+
+
+def _couleur_normalisee(actif=None, fenetre=None, amplitude=None):
+    """Les reglages de stabilisation de balance, defauts materialises.
+
+    UN SEUL endroit ou les defauts s'appliquent : le Porteur a sa
+    construction, construit_etat pour un appel direct, et la route
+    POST /api/couleur ne passent que par ici. L'import est local parce que
+    pipeline importe viewer (voir pipeline.main) : l'inverse au niveau du
+    module serait circulaire.
+    """
+    from .photometry import AMPLITUDE_COULEUR_DEFAUT, FENETRE_COULEUR_DEFAUT
+    from .pipeline import COULEUR_DEFAUT
+    return {
+        "actif": COULEUR_DEFAUT if actif is None else bool(actif),
+        "fenetre": (FENETRE_COULEUR_DEFAUT if fenetre is None
+                    else int(fenetre)),
+        "amplitude": (AMPLITUDE_COULEUR_DEFAUT if amplitude is None
+                      else float(amplitude)),
+    }
 
 
 def _signature_analyse(donnees):
@@ -132,7 +159,7 @@ def _signature_analyse(donnees):
 
 def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
                    seuils=None, tolerance_bord=None, seuil_masque=None,
-                   cadrage=None):
+                   cadrage=None, couleur=None):
     """Ce que les routes ont besoin de connaitre, observe sans rien generer.
 
     Ne leve plus quand le cache manque, quand les vignettes manquent, ou
@@ -151,8 +178,16 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
     Porteur). Elles ne changent aucun verdict ; elles sont ici parce que le
     descripteur du rendu les enregistre, et que la comparaison qui dit « a
     refaire » doit porter sur exactement le meme dictionnaire.
+
+    couleur : les reglages de stabilisation de balance, deja materialises
+    par le Porteur (defauts appliques ici pour un appel direct). Meme
+    statut que le cadrage : aucun verdict n'en depend, le descripteur les
+    enregistre.
     """
     from .pipeline import _signature_source, charger_cache
+
+    if couleur is None:
+        couleur = _couleur_normalisee()
 
     info = probe(source)
     signature = _signature_source(source)
@@ -182,7 +217,8 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
         # ni reconstruire l'etat (voir _etapes_courantes). Une reference,
         # pas une copie : donnees["frames"] est deja porte par l'etat pret.
         "cache": donnees,
-        "reglages": _reglages(seuils, tolerance_bord, seuil_masque, cadrage),
+        "reglages": _reglages(seuils, tolerance_bord, seuil_masque, cadrage,
+                              couleur),
     }
     if manque:
         return {**base, "verdicts": [], "frames": [],
@@ -273,7 +309,8 @@ class Porteur:
                  seuils=None, tolerance_bord=None, seuil_masque=None,
                  taille=None, taille_sortie=None, interp_max=None,
                  interp_deplacement_max=None,
-                 depassement_butee=None):
+                 depassement_butee=None,
+                 couleur=None, couleur_fenetre=None, couleur_amplitude=None):
         #: Le cadrage, meme raison que les seuils etendue a la geometrie : le
         #: sous-parseur viewer accepte les memes options que render, et un
         #: utilisateur qui lance le viewer avec --taille 900x1600 puis clique
@@ -305,6 +342,16 @@ class Porteur:
         self.seuils = seuils
         self.tolerance_bord = tolerance_bord
         self.seuil_masque = seuil_masque
+        #: Les reglages de stabilisation de balance, TOUJOURS materialises
+        #: (defauts compris) : contrairement au cadrage, la page peut les
+        #: MODIFIER (POST /api/couleur, voir regle_couleur), et elle a
+        #: besoin de valeurs a afficher, pas d'absences. Un seul
+        #: dictionnaire, parce qu'il part a trois endroits qui doivent voir
+        #: le meme contenu : les arguments de render (_travail_rendu), les
+        #: reglages du descripteur (construit_etat) et la reponse de
+        #: /api/frames qui seme les controles de la page.
+        self.couleur = _couleur_normalisee(couleur, couleur_fenetre,
+                                           couleur_amplitude)
         # Les six options de cadrage ne sont PLUS conservees une a une a
         # cote de self.cadrage : deux sources pour la meme chose, dont une
         # seule serait lue, laisserait un porteur.taille = ... sans effet et
@@ -334,7 +381,8 @@ class Porteur:
         """
         etat = _etat_vide() if source is None else construit_etat(
             source, cache_path, decisions_path, dossier_vignettes,
-            self.seuils, self.tolerance_bord, self.seuil_masque, self.cadrage)
+            self.seuils, self.tolerance_bord, self.seuil_masque, self.cadrage,
+            self.couleur)
         # Une DONNEE, pas un verdict : le fichier de decisions demande en
         # ligne de commande, que _tri_orpheline compare au chemin derive a
         # chaque requete. Le calcul n'est deliberement pas fige ici, voir
@@ -352,6 +400,18 @@ class Porteur:
         # orthographe du montage de l'etat, avertissement compris.
         self._pose(self.source, self.cache_path, self.decisions_path,
                    self.dossier_vignettes)
+
+    def regle_couleur(self, actif, fenetre, amplitude):
+        """Installe ces reglages de stabilisation de balance et recharge.
+
+        Les valeurs arrivent deja validees (voir la route /api/couleur) et
+        COMPLETES : un reglage partiel n'existe pas, la page envoie toujours
+        les trois. Le rechargement reconstruit les reglages du descripteur,
+        donc la peremption du rendu (« a refaire ») suit toute seule.
+        """
+        self.couleur = {"actif": bool(actif), "fenetre": int(fenetre),
+                        "amplitude": float(amplitude)}
+        self.recharge()
 
     def change_source(self, chemin):
         """Bascule sur cette video. Leve si elle n'est pas lisible.
@@ -425,10 +485,14 @@ def _corps_frames(etat):
         # Le bandeau s'affiche AVANT que quoi que ce soit existe : c'est
         # precisement son role de guide, et c'est cette forme-la de la
         # reponse que voit un premier lancement.
+        # La couleur sur cette forme AUSSI : l'etape rendu peut etre
+        # disponible sans que la source soit prete (cache d'analyse sans
+        # vignettes), et la page seme alors ses controles depuis ici.
         corps = {"source": etat["source"], "pret": False,
                  "manque": etat["manque"],
                  "nb_frames_estime": etat["nb_frames_estime"],
-                 "etapes": etapes_, "divergentes": list(divergentes)}
+                 "etapes": etapes_, "divergentes": list(divergentes),
+                 "couleur": etat["reglages"]["couleur"]}
         if avertissement:
             corps["avertissement"] = avertissement
         return corps
@@ -448,7 +512,8 @@ def _corps_frames(etat):
     # 2556 booleens.
     corps = {"source": etat["source"], "pret": True, "fps": etat["fps"],
              "frames": frames, "etapes": etapes_,
-             "divergentes": list(divergentes)}
+             "divergentes": list(divergentes),
+             "couleur": etat["reglages"]["couleur"]}
     # Surface au client un fichier de decisions present mais refuse (schema
     # perime, source differente...) : sans ca l'utilisateur croit reviser
     # avec ses decisions passees alors qu'elles ont ete silencieusement
@@ -986,6 +1051,11 @@ def _travail_rendu(porteur, moteur, ecraser, png):
     # construit une fois pour toutes, parce que la meme geometrie part aussi
     # dans le descripteur ecrit a la livraison.
     cadrage = porteur.cadrage
+    # Copie saisie ICI, dans le fil HTTP, comme le cadrage : un POST
+    # /api/couleur pendant l'encodage ne doit pas changer les gains d'un
+    # rendu deja parti — le descripteur ecrit plus bas (etat["reglages"])
+    # date du meme instant, les deux restent d'accord.
+    couleur = dict(porteur.couleur)
     # Meme raison que dans _travail_analyse : saisi dans le fil HTTP, ou
     # l'etat et les chemins sont encore ceux d'une meme source.
     cache_path = porteur.cache_path
@@ -1018,6 +1088,9 @@ def _travail_rendu(porteur, moteur, ecraser, png):
                              seuil_masque=porteur.seuil_masque,
                              decisions_path=etat["decisions_path"],
                              frames_dir=frames_partiel,
+                             couleur=couleur["actif"],
+                             couleur_fenetre=couleur["fenetre"],
+                             couleur_amplitude=couleur["amplitude"],
                              progression=moteur.progression, **cadrage)
         except BaseException:
             # Un mp4 tronque laisse en place serait pris pour un rendu
@@ -1356,6 +1429,35 @@ def fabrique_handler(porteur, moteur):
             corps = json.dumps({"chemin": chemin}).encode("utf-8")
             return self._envoie(200, corps, "application/json")
 
+        def _regle_couleur(self, requete):
+            """Installe les reglages de stabilisation de balance du porteur.
+
+            Les TROIS champs sont exiges, aux types JSON stricts : la page
+            les a toujours tous, et accepter un reglage partiel laisserait
+            deux onglets se composer un etat que ni l'un ni l'autre n'a
+            demande. Un rendu en cours n'est pas un refus : il a saisi sa
+            copie des reglages au lancement (voir _travail_rendu), et le
+            changement ne vaut que pour le suivant — c'est exactement ce que
+            le bandeau « a refaire » dira.
+            """
+            actif = requete.get("actif")
+            fenetre = requete.get("fenetre")
+            amplitude = requete.get("amplitude")
+            # bool est un int en Python : l'exclure explicitement, sans quoi
+            # fenetre=true passerait pour la fenetre 1.
+            if not isinstance(actif, bool):
+                return self._envoie(400, b"", "text/plain")
+            if (isinstance(fenetre, bool) or not isinstance(fenetre, int)
+                    or not 1 <= fenetre <= 9999):
+                return self._envoie(400, b"", "text/plain")
+            if (isinstance(amplitude, bool)
+                    or not isinstance(amplitude, (int, float))
+                    or not 0.0 <= amplitude <= 1.0):
+                return self._envoie(400, b"", "text/plain")
+            porteur.regle_couleur(actif, fenetre, amplitude)
+            corps = json.dumps(porteur.couleur).encode("utf-8")
+            return self._envoie(200, corps, "application/json")
+
         def _change_source(self, requete):
             """Bascule le porteur sur la video demandee.
 
@@ -1421,9 +1523,9 @@ def fabrique_handler(porteur, moteur):
             if self.path == "/api/parcourir":
                 return self._parcourir(etat, self._lit_corps_json() or {})
             if self.path not in ("/api/decision", "/api/source",
-                                 "/api/tache"):
+                                 "/api/tache", "/api/couleur"):
                 return self._envoie(404, b"", "text/plain")
-            # Une seule lecture du corps pour les trois routes, et non une
+            # Une seule lecture du corps pour les quatre routes, et non une
             # par branche : c'est elle qui porte le plafond de taille, et le
             # flux ne se lit qu'une fois.
             requete = self._lit_corps_json()
@@ -1433,6 +1535,8 @@ def fabrique_handler(porteur, moteur):
                 return self._change_source(requete)
             if self.path == "/api/tache":
                 return self._lance_tache(requete)
+            if self.path == "/api/couleur":
+                return self._regle_couleur(requete)
             try:
                 n = int(requete["n"])
                 statut = requete["statut"]
@@ -1468,7 +1572,8 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
          tolerance_bord=None, seuil_masque=None, moteur=None,
          taille=None, taille_sortie=None, interp_max=None,
          interp_deplacement_max=None,
-         depassement_butee=None):
+         depassement_butee=None,
+         couleur=None, couleur_fenetre=None, couleur_amplitude=None):
     """Lance le serveur local et ouvre le navigateur.
 
     source : la video a revoir, ou None pour ouvrir le viewer sur rien et en
@@ -1488,6 +1593,11 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
     les ignorer etait sans consequence. Depuis qu'elle lance le rendu, les
     ignorer donnerait un rendu qui ne correspond pas a ce qui a ete demande.
 
+    couleur, couleur_fenetre, couleur_amplitude : la stabilisation de
+    balance, memes parametres que pipeline.render, transmis au Porteur pour
+    la meme raison que le cadrage — ils sement en plus les controles de la
+    page, qui peut ensuite les modifier (POST /api/couleur).
+
     moteur : moteur de taches a utiliser ; un neuf par defaut. L'injecter
     rend les tests possibles sans lancer de vrai traitement.
     """
@@ -1499,7 +1609,9 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
                       taille=taille, taille_sortie=taille_sortie,
                       interp_max=interp_max,
                       interp_deplacement_max=interp_deplacement_max,
-                      depassement_butee=depassement_butee)
+                      depassement_butee=depassement_butee,
+                      couleur=couleur, couleur_fenetre=couleur_fenetre,
+                      couleur_amplitude=couleur_amplitude)
     httpd = ThreadingHTTPServer(("127.0.0.1", port),
                                 fabrique_handler(porteur, moteur))
     url = f"http://127.0.0.1:{httpd.server_port}/"

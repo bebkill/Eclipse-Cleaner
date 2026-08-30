@@ -942,6 +942,127 @@ def test_vignettes_annulees_finissent_annulee_et_non_echouee(
 # Voir "Finding 1" plus haut : c'est le meme invariant, applique cette fois
 # au rendu declenche par la page et non aux verdicts affiches.
 
+# -- Stabilisation de la couleur : les reglages vivent dans le Porteur,
+# entrent au descripteur via les reglages, sont exposes a la page par
+# /api/frames et modifiables par POST /api/couleur.
+
+def test_construit_etat_porte_la_couleur_par_defaut(tmp_path):
+    """Les reglages de couleur entrent au descripteur du rendu : sans eux,
+    un rendu fait avec la stabilisation ne se distinguerait pas d'un rendu
+    fait sans, et le bandeau dirait « deja fait » d'un rendu a refaire."""
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0)
+    etat = construit_etat(src, cache, str(tmp_path / "d.json"),
+                          str(tmp_path / "v"))
+    assert etat["reglages"]["couleur"] == {
+        "actif": True, "fenetre": 31, "amplitude": 0.25}
+
+
+def test_la_page_porte_les_controles_de_couleur(serveur):
+    """La case, la section depliable et ses deux champs, et la route :
+    l'oubli de l'un d'eux laisserait un reglage serveur sans aucun moyen
+    d'etre vu ou change depuis la page."""
+    url, _, _ = serveur
+    _, corps = _get(f"{url}/")
+    page = corps.decode("utf-8")
+    for marqueur in ("/api/couleur", "id=\"couleur-actif\"",
+                     "id=\"couleur-reglages\"", "id=\"couleur-fenetre\"",
+                     "id=\"couleur-amplitude\""):
+        assert marqueur in page, marqueur
+
+
+def test_le_rendu_reprend_la_couleur_du_porteur(tmp_path, monkeypatch):
+    """Miroir de test_le_rendu_reprend_les_reglages_du_porteur pour la
+    couleur : sans transmission, render() reprendrait ses propres defauts
+    et la page afficherait des reglages que le rendu n'applique pas."""
+    from eclipse import pipeline
+    from eclipse.viewer import _prepare
+
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0)
+    dossier = str(tmp_path / "v")
+    genere(src, dossier, _signature_source(src))
+    porteur = Porteur(src, cache, str(tmp_path / "d.json"), dossier,
+                      couleur=False, couleur_fenetre=15,
+                      couleur_amplitude=0.1)
+
+    recu = {}
+
+    def faux_render(*a, **k):
+        recu.update(a=a, k=k)
+        with open(a[1], "wb") as f:
+            f.write(b"rendu")
+
+    monkeypatch.setattr(pipeline, "render", faux_render)
+    travail, _, _ = _prepare(porteur, Moteur(), "rendu", False)
+    travail()
+
+    assert recu["k"]["couleur"] is False
+    assert recu["k"]["couleur_fenetre"] == 15
+    assert recu["k"]["couleur_amplitude"] == 0.1
+
+
+def test_api_frames_expose_les_reglages_de_couleur(serveur):
+    """La page seme ses controles depuis cette reponse : sans elle, la case
+    et les champs afficheraient des valeurs inventees cote client."""
+    url, _, _ = serveur
+    _, corps = _get(url + "/api/frames")
+    d = json.loads(corps)
+    assert d["couleur"] == {"actif": True, "fenetre": 31, "amplitude": 0.25}
+
+
+def test_post_couleur_change_les_reglages(serveur):
+    url, _, _ = serveur
+    code, corps = _post(url + "/api/couleur",
+                        {"actif": False, "fenetre": 15, "amplitude": 0.1})
+    assert code == 200
+    assert json.loads(corps) == {"actif": False, "fenetre": 15,
+                                 "amplitude": 0.1}
+    _, corps = _get(url + "/api/frames")
+    d = json.loads(corps)
+    assert d["couleur"] == {"actif": False, "fenetre": 15, "amplitude": 0.1}
+
+
+def test_post_couleur_entre_dans_les_reglages_du_descripteur(tmp_path):
+    """Le changement doit atteindre etat['reglages'], pas seulement la
+    reponse de l'API : c'est cette copie-la que le descripteur enregistre et
+    que la comparaison « a refaire » lit."""
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0)
+    genere(src, str(tmp_path / "v"), _signature_source(src))
+    porteur = Porteur(src, cache, str(tmp_path / "d.json"),
+                      str(tmp_path / "v"))
+    with _serveur_pour(porteur) as url:
+        code, _ = _post(url + "/api/couleur",
+                        {"actif": True, "fenetre": 61, "amplitude": 0.5})
+        assert code == 200
+        assert porteur.etat["reglages"]["couleur"] == {
+            "actif": True, "fenetre": 61, "amplitude": 0.5}
+
+
+@pytest.mark.parametrize("corps", [
+    {},                                                   # tout manque
+    {"actif": True, "fenetre": 0, "amplitude": 0.1},      # fenetre nulle
+    {"actif": True, "fenetre": -3, "amplitude": 0.1},     # fenetre negative
+    {"actif": True, "fenetre": 2.5, "amplitude": 0.1},    # fenetre non entiere
+    {"actif": True, "fenetre": 31, "amplitude": -0.1},    # amplitude negative
+    {"actif": True, "fenetre": 31, "amplitude": 9.0},     # amplitude demesuree
+    {"actif": "oui", "fenetre": 31, "amplitude": 0.1},    # actif non booleen
+    {"actif": True, "fenetre": "31", "amplitude": 0.1},   # types JSON stricts
+])
+def test_post_couleur_invalide_rend_400(serveur, corps):
+    url, _, _ = serveur
+    code, _ = _post(url + "/api/couleur", corps)
+    assert code == 400
+    # Et rien n'a bouge : la page relirait sinon des reglages a moitie pris.
+    _, reponse = _get(url + "/api/frames")
+    assert json.loads(reponse)["couleur"] == {
+        "actif": True, "fenetre": 31, "amplitude": 0.25}
+
+
 def test_le_rendu_reprend_les_reglages_du_porteur(tmp_path, monkeypatch):
     """Sans transmission, render() reprend ses propres defauts.
 
