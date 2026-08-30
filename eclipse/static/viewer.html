@@ -775,12 +775,17 @@ try {
            reglage n'est envoye a l'ouverture/fermeture du <details> : seul
            un changement de valeur parle au serveur. -->
       <details id="couleur-reglages" hidden>
-        <summary data-t="couleur_reglages_titre">reglages de la stabilisation</summary>
+        <!-- « parametres », et pas « reglages de la stabilisation » : ce
+             dernier se lisait comme la stabilisation d'IMAGE (le recadrage),
+             qui n'a aucun reglage ici. Les infobulles portent la valeur
+             typique et les bornes -- les memes que la validation du serveur
+             (voir viewer._regle_couleur) et que min/max des champs. -->
+        <summary data-t="couleur_parametres_titre">parametres</summary>
         <label data-t-title="couleur_fenetre_infobulle"
-               title="Largeur, en images, de la reference de teinte : court suit les changements rapides, long les ignore"><span data-t="couleur_fenetre">fenetre (images)</span>
+               title="Largeur, en images, de la reference de teinte : courte suit les changements rapides, longue les ignore. Typique : 31 - min 1, max 9999"><span data-t="couleur_fenetre">fenetre (images)</span>
           <input type="number" id="couleur-fenetre" min="1" max="9999" step="2"></label>
         <label data-t-title="couleur_amplitude_infobulle"
-               title="Correction de teinte maximale par canal, en fraction (0,25 = 25 %)"><span data-t="couleur_amplitude">correction max</span>
+               title="Correction de teinte maximale par canal, en fraction. Typique : 0,25 (= 25 %) - min 0 (aucune correction), max 1"><span data-t="couleur_amplitude">correction max</span>
           <input type="number" id="couleur-amplitude" min="0" max="1" step="0.05"></label>
       </details>
     </div>
