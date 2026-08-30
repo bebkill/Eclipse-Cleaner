@@ -26,7 +26,7 @@ eclipse-cleaner = "eclipse.pipeline:main"
 dev = ["pytest>=8.0"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

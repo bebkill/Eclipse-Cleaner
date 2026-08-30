@@ -36,7 +36,7 @@ Everything adapts to your video: resolution, aspect ratio, frame rate and appare
 
 ## Installation
 
-Requires **Python 3.12+**. The ffmpeg binary is bundled through `imageio-ffmpeg`: nothing else to install on your system.
+Requires **Python 3.12+** — check with `python --version` first: on a system whose default `python` is older (Homebrew, some Linux distros), the install fails with an unrelated-looking dependency error rather than a clear version message. The ffmpeg binary is bundled through `imageio-ffmpeg`: nothing else to install on your system.
 
 ```bash
 python -m pip install git+https://github.com/bebkill/Eclipse-Cleaner.git
