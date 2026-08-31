@@ -30,12 +30,29 @@ lui aussi pur (aucune connaissance HTTP ni page) : le titre de la boite et
 ses filtres sont la SEULE chaine qui doit atteindre une fenetre du systeme,
 jamais le DOM -- aucune solution cote page ne les atteint.
 """
+import sys
+
 from . import langues
 
 #: Conteneurs que ffmpeg lit dans ce projet. Compare en minuscules.
 #: Venait de explorateur.py, supprime avec l'explorateur web ; la valeur n'a
 #: pas bouge.
 EXTENSIONS_VIDEO = (".mp4", ".mov", ".avi", ".mkv", ".m4v")
+
+#: macOS is the exception to the THREAD paragraph above: the measurements
+#: there were made on Windows. On macOS, AppKit only allows windows on the
+#: MAIN thread, and this module runs in an HTTP handler thread — there,
+#: tkinter.Tk() does not raise a TclError the except clauses could turn into
+#: a status: it ABORTS the whole process (NSInternalInconsistencyException,
+#: issue #4). So the dialog is refused before tkinter is even imported. Like
+#: MESSAGE_INDISPONIBLE, this text only states the WHY; the page adds the
+#: way out (restart with the source on the command line) in its own
+#: language. A native macOS dialog (osascript) is the planned replacement —
+#: see issue #1.
+MESSAGE_MACOS = (
+    "The system file dialog is not available on macOS: it would have to "
+    "open from a background thread, which macOS refuses to the point of "
+    "killing the program.")
 
 #: Ce qu'on peut dire a l'utilisateur quand la boite ne s'ouvre pas. Sans
 #: explorateur web, il ne reste AUCUN moyen de choisir une source depuis la
@@ -86,7 +103,13 @@ def choisit_video(dossier_initial=None, langue="fr"):
     s'afficher. Ne leve jamais autre chose de previsible : l'appelant est un
     gestionnaire HTTP, et une TclError nue lui donnerait une trace au lieu
     d'un statut.
+
+    On macOS the refusal is unconditional and comes FIRST: there, a Tk
+    created outside the main thread does not fail, it kills the process
+    (see MESSAGE_MACOS).
     """
+    if sys.platform == "darwin":
+        raise Indisponible(MESSAGE_MACOS)
     try:
         libelles = langues.charge(langue)
     except FileNotFoundError:

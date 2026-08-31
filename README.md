@@ -140,6 +140,7 @@ The CLI flags are in French (see [Known limitations](#known-limitations)); here 
 - **Clipped highlights cannot be reconstructed** — exposure is re-leveled, but detail lost to saturation stays lost.
 - **Two color renditions can coexist in one film** if a solar filter was removed mid-sequence. That is what really happened in front of the camera, so it is kept, like cloud crossings.
 - The viewer's **Browse…** dialog needs a graphical session (it uses the system file dialog via `tkinter`). On a headless machine, pass the video path on the command line instead.
+- On **macOS**, the Browse… dialog is disabled for now: opening it from the viewer would crash Python (macOS only allows system windows on the main thread — see [#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)). Pass the video path on the command line instead: `python -m eclipse viewer path/to/video.mp4`. A native macOS dialog is planned ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)).
 - The test suite is developed on **Windows**; four Windows-specific tests skip themselves automatically on Linux/macOS.
 
 What's being considered next (SER input, raw Bayer AVI, choice of output format…) lives in the [roadmap](ROADMAP.md).

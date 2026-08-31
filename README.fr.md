@@ -137,6 +137,7 @@ python -m eclipse render entree.mp4 sortie.mp4 --cache analysis.json --blur-rel 
 - **Les hautes lumières écrêtées ne se reconstruisent pas** — le niveau est rétabli, mais le détail perdu dans la saturation reste perdu.
 - **Deux rendus colorimétriques peuvent cohabiter dans un même film** si un filtre solaire a été retiré en cours de séquence. C'est ce qui s'est réellement passé devant la caméra, donc c'est conservé, au même titre que les traversées nuageuses.
 - Le bouton **Parcourir…** du viewer a besoin d'une session graphique (il utilise la boîte de dialogue du système via `tkinter`). Sur une machine sans affichage, passez le chemin de la vidéo en argument.
+- Sous **macOS**, le bouton Parcourir… est désactivé pour l'instant : l'ouvrir depuis le viewer ferait planter Python (macOS n'autorise les fenêtres système que depuis le fil principal — voir [#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)). Passez le chemin de la vidéo en argument : `python -m eclipse viewer chemin/vers/video.mp4`. Une boîte de dialogue native macOS est prévue ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)).
 - La suite de tests est développée sous **Windows** ; quatre tests propres à Windows se sautent automatiquement sous Linux/macOS.
 
 Ce qui est à l'étude pour la suite (entrée SER, AVI brut Bayer, choix du format de sortie…) se trouve dans la [feuille de route](ROADMAP.fr.md).

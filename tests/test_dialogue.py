@@ -61,7 +61,8 @@ import pytest
 
 from eclipse import langues
 from eclipse.dialogue import (EXTENSIONS_VIDEO, MESSAGE_INDISPONIBLE,
-                              Indisponible, _types_de_fichiers, choisit_video)
+                              MESSAGE_MACOS, Indisponible, _types_de_fichiers,
+                              choisit_video)
 
 tkinter = pytest.importorskip("tkinter")
 
@@ -360,6 +361,32 @@ def test_tkinter_absent_leve_Indisponible(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", refuse)
     with pytest.raises(Indisponible):
         choisit_video()
+
+
+def test_on_macos_the_dialog_is_refused_before_tkinter_is_touched(monkeypatch):
+    """AppKit only allows windows on the MAIN thread, and choisit_video runs
+    in an HTTP handler thread. There, tkinter.Tk() does not raise a TclError
+    the except clauses could turn into a status: it ABORTS the whole process
+    (NSInternalInconsistencyException — issue #4, macOS 26). The guard must
+    therefore fire before tkinter is even imported; the bombed Tk proves the
+    call never gets that far, and Indisponible (not AssertionError) proves
+    the refusal takes the same path the page already knows how to display.
+    """
+    def boom():
+        raise AssertionError("Tk must never be instantiated on macOS")
+
+    monkeypatch.setattr(tkinter, "Tk", boom)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    with pytest.raises(Indisponible) as exc:
+        choisit_video()
+    assert str(exc.value) == MESSAGE_MACOS
+
+
+def test_the_macos_message_says_why():
+    """Like MESSAGE_INDISPONIBLE below: the user reads it in the page, so it
+    must name the platform and the reason. The WHAT TO DO is added by the
+    page (key "boite_indisponible"), in its own language — not here."""
+    assert "macOS" in MESSAGE_MACOS
 
 
 def test_le_message_d_indisponibilite_dit_pourquoi():
