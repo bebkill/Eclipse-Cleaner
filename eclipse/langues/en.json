@@ -42,6 +42,7 @@
  "sans_source_lien": "Choose a source",
  "sans_source_apres": "in the rail, on the left, to pick the video to process.",
  "manque_prete_intro": "This source isn't ready yet: ",
+ "aucune_position": "No frame has a usable disk position (0 of {n}). The analysis preset probably does not match this video: try the Moon preset for a lunar eclipse, or lower --seuil-masque.",
  "bouton_annuler": "Cancel",
  "bouton_statut_infobulle": "Toggle keep / drop (k)",
  "bouton_lecture": "Play",

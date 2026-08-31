@@ -107,3 +107,25 @@ def test_une_masse_captee_absente_invalide_la_mesure():
     d["frames"][20]["cx"] = 400.0
     r = analyse_verdicts(d, 1080, 1920)
     assert abs(r["traj_x"][20] - 540.0) < 1.0
+
+
+def test_no_valid_measure_degrades_instead_of_raising():
+    """When no frame passes the mask threshold, the analysis must not
+    crash the caller (this is the reported viewer bug): fallback
+    trajectory at the frame center, every frame marked no_lock."""
+    d = _cache(n=30)
+    for f in d["frames"]:
+        f["masse_captee"] = 0.40          # all below the 0.80 default
+    r = analyse_verdicts(d, 1080, 1920)
+    assert r["mesures_valides"] == 0
+    assert all(v == "no_lock" for v in r["verdicts"])
+    assert np.allclose(r["traj_x"], 1080 / 2.0)   # source coordinates
+    assert np.allclose(r["traj_y"], 1920 / 2.0)
+    assert len(r["traj_x"]) == 30
+
+
+def test_valid_measure_count_is_reported():
+    d = _cache(n=30)
+    d["frames"][5]["masse_captee"] = 0.10
+    r = analyse_verdicts(d, 1080, 1920)
+    assert r["mesures_valides"] == 29

@@ -49,7 +49,6 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # solaire capture-t-il la lumiere ? (voir quality.masse_captee)
     capt = _colonne(frames, "masse_captee", 0.0)
     mesure_ok = np.isfinite(cx) & (capt >= seuil_masque)
-    scx, scy = smooth_track(cx, cy, mesure_ok)
 
     # kx/ky convertissent les coordonnees d'analyse en coordonnees SOURCE
     # pleine resolution — jamais en coordonnees de sortie, qui ne sont plus
@@ -57,6 +56,18 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # non 1/scale, car les tailles d'analyse sont arrondies au pixel pair.
     kx = src_w / donnees["width"]
     ky = src_h / donnees["height"]
+    if not mesure_ok.any():
+        # Reported bug: with zero usable position, interpolate_invalid used
+        # to raise and the viewer crashed while reloading its state. There
+        # is nothing to interpolate FROM, so degrade honestly instead:
+        # window centered on the source, every frame flagged no_lock. The
+        # caller decides what to tell the user (see mesures_valides).
+        n = len(frames)
+        return {"verdicts": ["no_lock"] * n,
+                "traj_x": np.full(n, src_w / 2.0),
+                "traj_y": np.full(n, src_h / 2.0),
+                "kx": kx, "ky": ky, "mesures_valides": 0}
+    scx, scy = smooth_track(cx, cy, mesure_ok)
 
     # Le critere de bord s'applique a la trajectoire APRES interpolation
     # (scx, scy sont deja la sortie de smooth_track) : une frame interpolee
@@ -82,4 +93,4 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
         [h or v for v, h in zip(verdicts, hors)], ilot_min)
 
     return {"verdicts": verdicts, "traj_x": scx * kx, "traj_y": scy * ky,
-            "kx": kx, "ky": ky}
+            "kx": kx, "ky": ky, "mesures_valides": int(mesure_ok.sum())}

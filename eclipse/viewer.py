@@ -221,7 +221,7 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
                               couleur),
     }
     if manque:
-        return {**base, "verdicts": [], "frames": [],
+        return {**base, "verdicts": [], "mesures_valides": 0, "frames": [],
                 "fps": info.get("fps", 30.0)}
 
     resultat = analyse_verdicts(donnees, info["width"], info["height"],
@@ -230,6 +230,7 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
     if avertissement:
         print(f"ATTENTION : {langues.rend_fr(avertissement)}")
     return {**base, "verdicts": resultat["verdicts"],
+            "mesures_valides": resultat["mesures_valides"],
             "frames": donnees["frames"], "fps": donnees.get("fps", 30.0)}
 
 
@@ -285,7 +286,7 @@ def _etat_vide():
     """
     return {"source": None, "pret": False, "manque": list(ETAPES),
             "etapes": {nom: "indisponible" for nom in ETAPES},
-            "verdicts": [], "frames": [], "fps": 30.0,
+            "verdicts": [], "mesures_valides": 0, "frames": [], "fps": 30.0,
             "nb_frames_estime": 0, "signature": None,
             "decisions_path": None, "dossier_vignettes": None}
 
@@ -492,7 +493,8 @@ def _corps_frames(etat):
                  "manque": etat["manque"],
                  "nb_frames_estime": etat["nb_frames_estime"],
                  "etapes": etapes_, "divergentes": list(divergentes),
-                 "couleur": etat["reglages"]["couleur"]}
+                 "couleur": etat["reglages"]["couleur"],
+                 "mesures_valides": etat["mesures_valides"]}
         if avertissement:
             corps["avertissement"] = avertissement
         return corps
@@ -513,7 +515,8 @@ def _corps_frames(etat):
     corps = {"source": etat["source"], "pret": True, "fps": etat["fps"],
              "frames": frames, "etapes": etapes_,
              "divergentes": list(divergentes),
-             "couleur": etat["reglages"]["couleur"]}
+             "couleur": etat["reglages"]["couleur"],
+             "mesures_valides": etat["mesures_valides"]}
     # Surface au client un fichier de decisions present mais refuse (schema
     # perime, source differente...) : sans ca l'utilisateur croit reviser
     # avec ses decisions passees alors qu'elles ont ete silencieusement

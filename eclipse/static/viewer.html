@@ -871,6 +871,7 @@ try {
         <em data-t="sans_source_lien">Choisir une source</em>
         <span data-t="sans_source_apres">dans le rail, a gauche, pour designer la video a traiter.</span></p>
       <p id="manque-prete"><span data-t="manque_prete_intro">Cette source n'est pas encore prete : </span><span id="liste-manque"></span></p>
+      <p id="no-position" hidden></p>
     </div>
     <div id="avancement" hidden>
       <span id="avancement-genre"></span>
@@ -1650,6 +1651,7 @@ const elAnnuler = document.getElementById("annuler");
 const elResultatTache = document.getElementById("resultat-tache");
 const elSansSource = document.getElementById("sans-source");
 const elManquePrete = document.getElementById("manque-prete");
+const elNoPosition = document.getElementById("no-position");
 const elSourceCourante = document.getElementById("source-courante");
 const elChoisirSource = document.getElementById("choisir-source");
 const elSourceMessage = document.getElementById("source-message");
@@ -1805,6 +1807,14 @@ async function chargeFrames() {
   derniereManque = (!d.pret && sourceCourante !== null) ? d.manque : null;
   if (derniereManque)
     elListeManque.textContent = derniereManque.map(libelleEtape).join(", ");
+  // Zero valid measure: the video is processable but the preset doesn't
+  // match it. Retained for rafraichitTextesDynamiques (see lastDiagnostic),
+  // exactly like derniereManque just above.
+  const diag = d.pret && d.mesures_valides === 0;
+  lastDiagnostic = diag ? d.frames.length : null;
+  elNoPosition.hidden = !diag;
+  if (diag)
+    elNoPosition.textContent = t("aucune_position", {n: d.frames.length});
   // L'etat des trois etapes vient du serveur, qui l'envoie sur les TROIS
   // formes. Object.assign par-dessus les trois valeurs par defaut : une
   // reponse amputee laisse l'etape indisponible plutot qu'undefined, dont
@@ -1930,6 +1940,12 @@ let derniereTache = null;
 // derniereTache juste au-dessus, pour #liste-manque -- voir chargeFrames et
 // rafraichitTextesDynamiques.
 let derniereManque = null;
+
+// The frame count to cite in the "no position" diagnostic (zero valid
+// measure on a ready source), or null when it doesn't apply. Same role as
+// derniereManque just above, for #no-position -- see chargeFrames and
+// rafraichitTextesDynamiques.
+let lastDiagnostic = null;
 
 // Le dernier message signale par signaleErreur, ou null si le bandeau est
 // vide. Une CLE (ou la liste de faits que le serveur envoie), jamais du
@@ -2061,6 +2077,11 @@ function rafraichitTextesDynamiques() {
   // dans l'ancienne langue, cote a cote avec #manque-prete qui, lui, porte
   // un data-t et suit.
   if (derniereManque) elListeManque.textContent = derniereManque.map(libelleEtape).join(", ");
+  // Same reason, same machinery, for the "no position" diagnostic: composed
+  // once by chargeFrames from d.frames.length, never touched again -- see
+  // derniereManque just above.
+  if (lastDiagnostic !== null)
+    elNoPosition.textContent = t("aucune_position", {n: lastDiagnostic});
   // Le bandeau d'erreur et le message du panneau de source portent tous deux
   // des textes composes une fois (signaleErreur, messageSource) et jamais
   // repeints depuis : sans ces deux rappels, l'avertissement de tri

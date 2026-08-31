@@ -383,10 +383,13 @@ def test_construit_etat_transmet_seuil_masque_jusqu_a_analyse_verdicts(tmp_path)
     hop qui perdrait ce parametre romprait cet invariant en silence.
 
     A 0.99, masse_captee (bimodale, voir plus haut) est sous le seuil sur
-    TOUTES les frames : plus aucune mesure n'est valide, et
-    interpolate_invalid leve. Au defaut (0.80), 5 frames (10-14, masse_captee
-    ~0.106) sont rejetees mais la trajectoire reste interpolable : 5 verdicts
-    non None, aucune exception."""
+    TOUTES les frames : plus aucune mesure n'est valide.
+
+    construit_etat now degrades instead of raising (see analyse_verdicts):
+    mesures_valides drops to 0 and every verdict becomes no_lock. At the
+    default threshold (0.80), 5 frames (10-14, masse_captee ~0.106) are
+    rejected but the trajectory stays interpolable: 5 non-None verdicts,
+    mesures_valides at full count."""
     src = _cree_video(tmp_path)
     cache = str(tmp_path / "a.json")
     analyze(src, cache, scale=1.0)
@@ -399,12 +402,26 @@ def test_construit_etat_transmet_seuil_masque_jusqu_a_analyse_verdicts(tmp_path)
     etat_defaut = construit_etat(src, cache, str(tmp_path / "d.json"),
                                  dossier)
     assert sum(1 for v in etat_defaut["verdicts"] if v is not None) == 5
+    nb_frames = len(etat_defaut["verdicts"])
+    assert etat_defaut["mesures_valides"] == nb_frames - 5
 
     dossier2 = str(tmp_path / "v2")
     genere(src, dossier2, signature)
-    with pytest.raises(ValueError, match="Aucune mesure valide"):
-        construit_etat(src, cache, str(tmp_path / "d2.json"),
-                       dossier2, seuil_masque=0.99)
+    etat_degrade = construit_etat(src, cache, str(tmp_path / "d2.json"),
+                                  dossier2, seuil_masque=0.99)
+    assert etat_degrade["mesures_valides"] == 0
+    assert all(v == "no_lock" for v in etat_degrade["verdicts"])
+
+
+def test_frames_body_carries_the_valid_measure_count(tmp_path):
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0)
+    genere(src, str(tmp_path / "v"), _signature_source(src))
+    porteur = Porteur(src, cache, str(tmp_path / "d.json"), str(tmp_path / "v"))
+    corps = viewer._corps_frames(porteur.etat)
+    assert isinstance(corps["mesures_valides"], int)
+    assert corps["mesures_valides"] > 0
 
 
 # -- Finding 2 : le nombre de vignettes doit correspondre au cache d'analyse.

@@ -42,6 +42,7 @@
  "sans_source_lien": "Choisir une source",
  "sans_source_apres": "dans le rail, à gauche, pour désigner la vidéo à traiter.",
  "manque_prete_intro": "Cette source n'est pas encore prête : ",
+ "aucune_position": "Aucune frame n'a de position de disque exploitable (0 sur {n}). Le preset d'analyse ne correspond probablement pas à cette vidéo : essayez le preset Lune pour une éclipse lunaire, ou baissez --seuil-masque.",
  "bouton_annuler": "Annuler",
  "bouton_statut_infobulle": "Basculer conserver / écarter (k)",
  "bouton_lecture": "Lecture",
