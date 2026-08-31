@@ -21,8 +21,6 @@ _ANALYSIS_DEFAULTS = {
     "light_threshold": 0.35,    # quality.masse_captee light cut (x max)
 }
 
-_SORT_DEFAULTS = {"seuils": {}, "seuil_masque": None}
-
 # Initial values for moon are engineering estimates, measured and fixed
 # against the three real lunar videos in the calibration task [CALIBRER-T11]:
 # - light_threshold 0.10: the umbral part of the disc sits at 10-25 % of the
@@ -38,7 +36,7 @@ _PRESETS = {
 }
 
 
-def _profil(preset):
+def _profile(preset):
     if preset not in _PRESETS:
         raise ValueError(
             f"Preset inconnu : {preset!r}. Choix : {', '.join(PRESET_NAMES)}")
@@ -47,13 +45,13 @@ def _profil(preset):
 
 def analysis_params(preset):
     """Resolved pass-1 parameters (strategies) for this preset name."""
-    profil = _profil(preset)
-    return {cle: profil.get(cle, defaut)
-            for cle, defaut in _ANALYSIS_DEFAULTS.items()}
+    profile = _profile(preset)
+    return {key: profile.get(key, default)
+            for key, default in _ANALYSIS_DEFAULTS.items()}
 
 
 def sort_defaults(preset):
     """Pass-2 sorting defaults; explicit CLI flags override them."""
-    profil = _profil(preset)
-    return {"seuils": dict(profil.get("seuils", {})),
-            "seuil_masque": profil.get("seuil_masque")}
+    profile = _profile(preset)
+    return {"seuils": dict(profile.get("seuils", {})),
+            "seuil_masque": profile.get("seuil_masque")}

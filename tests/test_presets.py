@@ -8,11 +8,11 @@ def test_custom_is_the_current_behaviour():
     assert sort_defaults("custom") == {"seuils": {}, "seuil_masque": None}
 
 def test_every_preset_resolves_to_the_full_key_set():
-    for nom in PRESET_NAMES:
-        p = analysis_params(nom)
+    for name in PRESET_NAMES:
+        p = analysis_params(name)
         assert set(p) == {"lit_mode", "radius_mode", "vote",
                           "light_threshold"}
-        s = sort_defaults(nom)
+        s = sort_defaults(name)
         assert set(s) == {"seuils", "seuil_masque"}
 
 def test_moon_strategies():
