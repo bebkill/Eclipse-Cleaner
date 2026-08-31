@@ -751,11 +751,16 @@ def main(argv=None):
 
     try:
         if args.commande == "analyze":
-            # or "custom" : la detection automatique du profil arrive en
-            # tache 8, qui remplacera cette resolution par defaut.
+            preset = args.preset
+            if preset is None:
+                from .detect import classify_video
+                suggestion = classify_video(args.source)
+                preset = suggestion["type"] or "custom"
+                print(f"Type d'eclipse detecte : {preset} "
+                      f"(forcer avec --preset)")
             analyze(args.source, args.cache, args.scale, args.radius,
                     processus=args.processus,
-                    preset=args.preset or "custom",
+                    preset=preset,
                     seuil_lumiere=args.seuil_lumiere)
         elif args.commande == "render":
             render(args.source, args.sortie, args.cache, seuils or None,
@@ -811,10 +816,17 @@ def main(argv=None):
         else:
             donnees_cache = charger_cache(args.cache, args.source)
             if donnees_cache is None:
+                preset = args.preset
+                if preset is None:
+                    from .detect import classify_video
+                    suggestion = classify_video(args.source)
+                    preset = suggestion["type"] or "custom"
+                    print(f"Type d'eclipse detecte : {preset} "
+                          f"(forcer avec --preset)")
                 analyze(args.source, args.cache,
                         args.scale if args.scale is not None else 0.5,
                         args.radius, processus=args.processus,
-                        preset=args.preset or "custom",
+                        preset=preset,
                         seuil_lumiere=args.seuil_lumiere)
             else:
                 # Meme controle que render, et le MEME message (voir

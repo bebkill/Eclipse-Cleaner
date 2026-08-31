@@ -158,6 +158,19 @@ def test_cli_preset_flag_reaches_the_cache(video_synthetique, tmp_path, capsys):
     assert json.load(open(cache, encoding="utf-8"))["preset"] == "custom"
 
 
+def test_analyze_without_preset_announces_the_detection(tmp_path, capsys):
+    chemin = str(tmp_path / "moon.mp4")
+    with FrameWriter(chemin, width=270, height=480, fps=30.0) as w:
+        for u in (0.2, 0.4, 0.6, 0.8) * 3:
+            w.write(make_moon_frame(w=270, h=480, center=(135.0, 240.0),
+                                    r=97.0, umbra=u, umbra_level=0.15))
+    cache = str(tmp_path / "a.json")
+    assert main(["analyze", chemin, "--cache", cache,
+                 "--processus", "1"]) == 0
+    assert "detecte : moon" in capsys.readouterr().out
+    assert json.load(open(cache, encoding="utf-8"))["preset"] == "moon"
+
+
 def test_charger_cache_rejette_un_schema_perime(video_synthetique, tmp_path):
     cache = str(tmp_path / "a.json")
     analyze(video_synthetique, cache, scale=1.0)
