@@ -45,6 +45,6 @@ jobs:
           Set-Content -Encoding ascii "$asset.sha256" "$hash  $asset"
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --draft --title $tag --notes "(brouillon cree par la CI pour porter l'executable Windows — notes a rediger avant publication)"
+            gh release create $tag --draft --title $tag --notes "(draft created by the CI to carry the Windows executable - write the notes before publishing)"
           }
           gh release upload $tag $asset "$asset.sha256" --clobber
