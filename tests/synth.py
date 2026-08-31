@@ -109,13 +109,13 @@ def make_moon_frame(w=270, h=480, center=(135.0, 240.0), r=60.0,
     disc = _couverture_disque(w, h, cx, cy, r)
     rs = 2.5 * r
     d = rs + r - 2.0 * r * float(umbra)
-    ombre = _couverture_disque(w, h, cx - d * np.cos(angle),
-                               cy - d * np.sin(angle), rs)
-    lit = disc * (1.0 - ombre)
-    dans_ombre = disc * ombre
-    niveau = gain * 255.0
-    img = (lit * niveau)[:, :, None] * np.array(wb, np.float32)
-    img = img + (dans_ombre * niveau * umbra_level)[:, :, None] \
+    shadow = _couverture_disque(w, h, cx - d * np.cos(angle),
+                                cy - d * np.sin(angle), rs)
+    lit = disc * (1.0 - shadow)
+    shadowed = disc * shadow
+    level = gain * 255.0
+    img = (lit * level)[:, :, None] * np.array(wb, np.float32)
+    img = img + (shadowed * level * umbra_level)[:, :, None] \
         * np.array(umbra_wb, np.float32)
     img = img + fond
     if blur > 0.0:
@@ -134,8 +134,8 @@ def make_totality_frame(w=270, h=480, center=(135.0, 240.0), r=60.0,
     disc = _couverture_disque(w, h, cx, cy, r)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-    dehors = np.clip(dist - r, 0.0, None)
-    lueur = corona * 255.0 * np.exp(-((dehors / (0.45 * r)) ** 2))
-    img = (lueur * (1.0 - disc) + 2.0 * disc + fond)[:, :, None] \
+    outside = np.clip(dist - r, 0.0, None)
+    glow = corona * 255.0 * np.exp(-((outside / (0.45 * r)) ** 2))
+    img = (glow * (1.0 - disc) + 2.0 * disc + fond)[:, :, None] \
         * np.ones(3, np.float32)
     return np.clip(img, 0, 255).astype(np.uint8)
