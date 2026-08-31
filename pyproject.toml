@@ -1,6 +1,6 @@
 [project]
 name = "eclipse-cleaner"
-version = "1.2.0"
+version = "1.2.1"
 description = "Clean up and stabilize a shaky solar-eclipse timelapse: drop broken frames, lock the solar disk to the center, normalize exposure"
 readme = "README.md"
 license = "MIT"
@@ -31,6 +31,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["eclipse*"]
+
+# Setuptools only bundles .py files unless told otherwise. The development
+# install (pip install -e) reads the source tree and hides any omission
+# here, so tests/test_packaging.py builds the wheel and checks these files.
+[tool.setuptools.package-data]
+eclipse = ["static/*.html"]
+"eclipse.langues" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
