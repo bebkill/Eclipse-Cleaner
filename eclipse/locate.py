@@ -172,7 +172,7 @@ def _vote_center(gray, r, sign):
 
 
 def locate_center(gray, r, vote="bright"):
-    """Centre du disque par vote dirige. (docstring existante conservee)
+    """Disc center by directed vote; see _vote_center for the method.
 
     vote "dark" flips the normals (p - r*n): on a dark disc ringed by
     light — a solar totality — the gradient at the limb points OUTWARD,
