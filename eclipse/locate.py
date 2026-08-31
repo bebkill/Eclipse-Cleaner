@@ -79,6 +79,63 @@ def estimate_radius(grays, n_candidats=50, lit_mode="percentile"):
     return float(np.median(np.sqrt(aires[meilleurs] / np.pi)))
 
 
+#: Radius scan bounds and steps. Geometric coarse sweep (12 % steps), one
+#: linear refinement, then a 1 px refinement: 25-35 votes per frame. The
+#: scan runs on a handful of sample frames once per analysis, never per
+#: frame. Validated on the two user Seestar videos before being coded:
+#: best-confidence radius 194-196 px on all 8 probed frames while the lit
+#: area said 73-132 (spec 2026-08-31).
+SCAN_COARSE_STEP = 1.12
+SCAN_RMAX_FRACTION = 0.6
+
+
+def scan_radius(grays, vote="bright", r_min=8.0, r_max=None):
+    """Radius maximizing the directed-vote peak confidence.
+
+    grays: a LIST of grayscale frames, already sampled by the caller.
+    Per frame: coarse geometric sweep, then two refinements around the
+    best candidate. Frames whose best confidence is under half the best
+    of the batch are dropped (empty sky, clouds); the median of the
+    survivors is returned. Raises ValueError when nothing is usable —
+    the caller should suggest an explicit --radius.
+    """
+    grays = list(grays)
+    if not grays:
+        raise ValueError("Aucune frame pour balayer le rayon")
+    h, w = grays[0].shape
+    if r_max is None:
+        r_max = SCAN_RMAX_FRACTION * min(h, w)
+
+    candidates = []
+    r = float(r_min)
+    while r <= r_max:
+        candidates.append(r)
+        r *= SCAN_COARSE_STEP
+
+    best_per_frame = []            # (confidence, radius) per usable frame
+    for g in grays:
+        scored = [(locate_center(g, rc, vote=vote)[2], rc)
+                  for rc in candidates]
+        conf, rc = max(scored)
+        if conf <= 0.0:
+            continue
+        # Linear refinement inside the geometric step, then at 1 px.
+        for step in (max(1.0, 0.04 * rc), 1.0):
+            low, high = rc - 3.0 * step, rc + 3.0 * step
+            fine = np.arange(max(r_min, low), high + step / 2, step)
+            conf, rc = max((locate_center(g, float(rf), vote=vote)[2],
+                            float(rf)) for rf in fine)
+        best_per_frame.append((conf, rc))
+
+    if not best_per_frame:
+        raise ValueError(
+            "Aucune frame ne donne de pic de vote exploitable : "
+            "impossible de balayer le rayon. Fournir --radius.")
+    ceiling = max(c for c, _ in best_per_frame)
+    radii = [rc for c, rc in best_per_frame if c >= 0.5 * ceiling]
+    return float(np.median(radii))
+
+
 def _vote_center(gray, r, sign):
     """Centre du disque solaire par vote dirige.
 

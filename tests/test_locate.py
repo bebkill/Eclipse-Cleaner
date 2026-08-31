@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from eclipse.locate import (
     sobel, lit_mask, estimate_radius, locate_center, locate_center_regime,
+    scan_radius,
 )
 from tests.synth import make_frame, make_moon_frame, make_totality_frame
 
@@ -328,3 +329,33 @@ def test_dual_vote_equals_the_winning_single_regime():
                                    r=55.0, corona=0.5))
     assert locate_center(tot, 55.0, vote="dual") == \
         locate_center(tot, 55.0, vote="dark")
+
+
+def test_scan_radius_recovers_a_half_shadowed_moon():
+    """The decisive measurement of the spec, in synthetic form: the lit
+    AREA lies (radius 73-132 px for a 195 px disc on the user's videos),
+    the vote-peak scan does not."""
+    grays = [gris(make_moon_frame(w=270, h=480, center=(135.0, 240.0),
+                                  r=97.0, umbra=u, umbra_level=0.25))
+             for u in (0.2, 0.5, 0.7)]
+    assert abs(scan_radius(grays) - 97.0) < 2.0
+
+
+def test_scan_radius_recovers_a_crescent_sun_in_a_halo():
+    grays = [gris(make_frame(w=270, h=480, center=(135.0, 240.0), r=65.0,
+                             phase=0.9, halo=0.4))
+             for _ in range(3)]
+    assert abs(scan_radius(grays, vote="dual") - 65.0) < 2.0
+
+
+def test_scan_radius_ignores_empty_frames():
+    vide = np.zeros((480, 270), np.float32)
+    grays = [vide, gris(make_moon_frame(w=270, h=480,
+                                        center=(135.0, 240.0), r=80.0,
+                                        umbra=0.4, umbra_level=0.25)), vide]
+    assert abs(scan_radius(grays) - 80.0) < 2.0
+
+
+def test_scan_radius_with_nothing_usable_raises():
+    with pytest.raises(ValueError):
+        scan_radius([np.zeros((60, 60), np.float32)])
