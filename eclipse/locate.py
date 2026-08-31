@@ -79,7 +79,7 @@ def estimate_radius(grays, n_candidats=50, lit_mode="percentile"):
     return float(np.median(np.sqrt(aires[meilleurs] / np.pi)))
 
 
-def locate_center(gray, r):
+def _vote_center(gray, r, sign):
     """Centre du disque solaire par vote dirige.
 
     En chaque point de contour, la normale n du gradient pointe vers les
@@ -113,8 +113,8 @@ def locate_center(gray, r):
 
     nx = gx[ys, xs] / poids
     ny = gy[ys, xs] / poids
-    vx = xs + r * nx
-    vy = ys + r * ny
+    vx = xs + sign * r * nx
+    vy = ys + sign * r * ny
 
     # L'accumulateur deborde du cadre : le centre peut tomber dehors quand
     # l'horizon tranche le disque.
@@ -169,6 +169,36 @@ def locate_center(gray, r):
         return float("nan"), float("nan"), 0.0
     cx, cy, somme = raffine
     return cx, cy, min(float(somme / max(wv.sum(), 1e-9)), 1.0)
+
+
+def locate_center(gray, r, vote="bright"):
+    """Centre du disque par vote dirige. (docstring existante conservee)
+
+    vote "dark" flips the normals (p - r*n): on a dark disc ringed by
+    light — a solar totality — the gradient at the limb points OUTWARD,
+    and the bright vote scatters its votes 2r away from the center. vote
+    "dual" evaluates both regimes and returns the sharper peak: the
+    crescent -> totality -> crescent transition happens inside a single
+    video, each frame must pick for itself.
+    """
+    return locate_center_regime(gray, r, vote)[0]
+
+
+def locate_center_regime(gray, r, vote="dual"):
+    """((cx, cy, conf), regime) — the winning regime alongside the fix.
+
+    mesure_frame stores the regime in the cache: quality measures read a
+    BRIGHT disc inside the radius but a DARK disc's light lives in the
+    ring outside it (see quality.measure_quality's regime parameter)."""
+    if vote == "bright":
+        return _vote_center(gray, r, +1.0), "bright"
+    if vote == "dark":
+        return _vote_center(gray, r, -1.0), "dark"
+    if vote != "dual":
+        raise ValueError(f"Regime de vote inconnu : {vote!r}")
+    bright = _vote_center(gray, r, +1.0)
+    dark = _vote_center(gray, r, -1.0)
+    return (bright, "bright") if bright[2] >= dark[2] else (dark, "dark")
 
 
 def _barycentre(acc, py, px, pad):

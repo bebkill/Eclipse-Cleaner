@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
-from eclipse.locate import sobel, lit_mask, estimate_radius, locate_center
-from tests.synth import make_frame, make_moon_frame
+from eclipse.locate import (
+    sobel, lit_mask, estimate_radius, locate_center, locate_center_regime,
+)
+from tests.synth import make_frame, make_moon_frame, make_totality_frame
 
 
 def gris(img):
@@ -289,3 +291,40 @@ def test_l_alignement_ne_deplace_pas_la_mesure_horizontale():
     assert abs(cx_haut - cx_bas) < 2.5, (
         f"la bascule deplace cx de {abs(cx_haut - cx_bas):.2f} px : le x du "
         f"concurrent est-il repris ?")
+
+
+def test_dark_vote_locks_a_totality_disc():
+    img = make_totality_frame(w=240, h=240, center=(120.0, 118.0), r=55.0,
+                              corona=0.5)
+    g = gris(img)
+    cx, cy, conf = locate_center(g, 55.0, vote="dark")
+    assert abs(cx - 120.0) < 1.5 and abs(cy - 118.0) < 1.5
+    assert conf > 0.05
+
+
+def test_bright_vote_does_not_lock_a_totality_disc():
+    """The regression the dual regime exists for: on a dark disc the
+    bright-vote normals point away from the center."""
+    img = make_totality_frame(w=240, h=240, center=(120.0, 118.0), r=55.0,
+                              corona=0.5)
+    cx, cy, conf = locate_center(gris(img), 55.0)     # default bright
+    _, _, conf_dark = locate_center(gris(img), 55.0, vote="dark")
+    assert conf_dark > 2.0 * conf
+
+
+def test_dual_vote_picks_the_right_regime_on_both_sides():
+    tot = gris(make_totality_frame(w=240, h=240, center=(120.0, 120.0),
+                                   r=55.0, corona=0.5))
+    croissant = gris(make_frame(w=240, h=240, center=(120.0, 120.0),
+                                r=55.0, phase=0.9))
+    (cx, cy, _), regime = locate_center_regime(tot, 55.0)
+    assert regime == "dark" and abs(cx - 120.0) < 1.5
+    (cx, cy, _), regime = locate_center_regime(croissant, 55.0)
+    assert regime == "bright" and abs(cx - 120.0) < 1.5
+
+
+def test_dual_vote_equals_the_winning_single_regime():
+    tot = gris(make_totality_frame(w=240, h=240, center=(120.0, 120.0),
+                                   r=55.0, corona=0.5))
+    assert locate_center(tot, 55.0, vote="dual") == \
+        locate_center(tot, 55.0, vote="dark")
