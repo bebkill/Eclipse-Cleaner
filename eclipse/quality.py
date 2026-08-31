@@ -59,8 +59,17 @@ def _grille(h, w):
     return yy, xx
 
 
-def measure_quality(gray, cx, cy, r):
-    """Mesures de qualite d'une frame, autour du centre fourni."""
+#: Capture radius factor for dark-regime frames: the light to capture is
+#: the corona around the disc, not the disc itself. [CALIBRER-T11]
+CORONA_FACTOR = 1.6
+
+
+def measure_quality(gray, cx, cy, r, regime="bright"):
+    """Mesures de qualite d'une frame, autour du centre fourni.
+
+    regime "dark" (the winning vote regime of locate_center_regime) reads
+    disk_p90 on the corona ring instead of inside the disc.
+    """
     if not (np.isfinite(cx) and np.isfinite(cy)):
         return {"disk_p90": float("nan"), "limb_sharpness": float("nan"),
                 "flare_ratio": float("nan")}
@@ -83,7 +92,13 @@ def measure_quality(gray, cx, cy, r):
     # derive numerique (voir rapport-perf.md).
     dist = np.sqrt(d2)
 
-    interieur = dist <= r
+    if regime == "dark":
+        # A totality's subject is the corona: its light lives in the ring
+        # OUTSIDE the dark disc. disk_p90 read inside would send the
+        # climax of the video to too_dark; read it on the ring instead.
+        interieur = (dist > r) & (dist <= 1.4 * r)
+    else:
+        interieur = dist <= r
     disk_p90 = float(np.percentile(g[interieur], 90.0)) if interieur.any() else 0.0
 
     # Nettete du limbe : gradient de pointe sur l'anneau, rapporte au

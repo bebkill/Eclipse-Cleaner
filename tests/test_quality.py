@@ -5,9 +5,10 @@ import pytest
 
 from eclipse.io import FrameReader
 from eclipse.locate import estimate_radius, locate_center, sobel
-from eclipse.quality import (measure_quality, classify, verdicts_hors_source,
+from eclipse.quality import (CORONA_FACTOR, measure_quality, classify,
+                              verdicts_hors_source,
                               SEUILS_DEFAUT, masse_captee, SEUIL_LUMIERE)
-from tests.synth import make_frame, make_moon_frame
+from tests.synth import make_frame, make_moon_frame, make_totality_frame
 from tests.test_pipeline import SOURCE_REELLE
 
 
@@ -38,6 +39,26 @@ def test_le_flare_eleve_flare_ratio():
         gris(make_frame(w=300, h=300, center=(150.0, 150.0), r=50.0,
                         flare=(250.0, 60.0, 40.0, 0.5))), 150.0, 150.0, 50.0)
     assert parasite["flare_ratio"] > propre["flare_ratio"] * 3.0
+
+
+def test_measure_quality_dark_regime_reads_the_corona_ring():
+    """During totality the disc is black: disk_p90 measured inside would
+    flag the climax of the video as too_dark. In the dark regime the
+    subject's brightness is the corona ring."""
+    img = make_totality_frame(w=240, h=240, center=(120.0, 120.0), r=55.0,
+                              corona=0.5)
+    g = img.astype(np.float32).mean(axis=2)
+    sombre = measure_quality(g, 120.0, 120.0, 55.0, regime="dark")
+    clair = measure_quality(g, 120.0, 120.0, 55.0)
+    assert sombre["disk_p90"] > 60.0          # corona level
+    assert clair["disk_p90"] < 10.0           # black disc: the old reading
+
+
+def test_masse_captee_dark_regime_widens_to_the_corona():
+    img = make_totality_frame(w=240, h=240, center=(120.0, 120.0), r=55.0,
+                              corona=0.5)
+    g = img.astype(np.float32).mean(axis=2)
+    assert masse_captee(g, 120.0, 120.0, CORONA_FACTOR * 55.0) > 0.80
 
 
 def test_measure_quality_sur_un_centre_nan():

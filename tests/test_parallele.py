@@ -6,7 +6,8 @@ import pytest
 
 from eclipse.parallele import (applique, mesure_frame, nombre_processus,
                                rend_frame)
-from tests.synth import make_frame
+from eclipse.presets import analysis_params
+from tests.synth import make_frame, make_totality_frame
 
 
 def test_nombre_processus_deduit_du_materiel():
@@ -135,11 +136,26 @@ def test_mesure_frame_rend_les_memes_mesures_que_le_calcul_direct():
     attendu_m = masse_captee(gray, cx, cy, r)
     attendu_p = measure_photometry(rgb, cx, cy, r)
 
-    obtenu = mesure_frame((rgb, r))
+    obtenu = mesure_frame((rgb, r, analysis_params("custom")))
     assert obtenu["cx"] == cx and obtenu["cy"] == cy and obtenu["conf"] == conf
     assert obtenu["q"] == attendu_q
     assert obtenu["m"] == attendu_m or (np.isnan(obtenu["m"]) and np.isnan(attendu_m))
     assert obtenu["p"] == attendu_p
+
+
+def test_mesure_frame_records_the_winning_regime():
+    img = make_totality_frame(w=240, h=240, center=(120.0, 120.0), r=55.0,
+                              corona=0.5)
+    mes = mesure_frame((img, 55.0, analysis_params("sun")))
+    assert mes["regime"] == "dark"
+    assert abs(mes["cx"] - 120.0) < 1.5
+    assert mes["m"] > 0.8                     # widened capture
+
+
+def test_mesure_frame_default_params_reproduce_the_old_behaviour():
+    img = make_frame(w=120, h=200, center=(40.0, 100.0), r=25.0)
+    ancien = mesure_frame((img, 25.0, analysis_params("custom")))
+    assert ancien["regime"] == "bright"
 
 
 def test_rend_frame_rend_la_meme_image_que_apply_frame():

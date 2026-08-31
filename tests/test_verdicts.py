@@ -124,6 +124,25 @@ def test_no_valid_measure_degrades_instead_of_raising():
     assert len(r["traj_x"]) == 30
 
 
+def test_sort_defaults_follow_the_cache_preset():
+    """A dim but steady moon sequence: dark_abs 40 (custom default) would
+    reject everything, the moon preset's dark_abs must keep it."""
+    d = _cache(n=40, p90=12.0)
+    d["preset"] = "moon"
+    r = analyse_verdicts(d, 1080, 1920)
+    assert all(v is None for v in r["verdicts"])
+    d["preset"] = "custom"
+    r = analyse_verdicts(d, 1080, 1920)
+    assert all(v == "too_dark" for v in r["verdicts"])
+
+
+def test_explicit_seuils_override_the_preset_defaults():
+    d = _cache(n=40, p90=12.0)
+    d["preset"] = "moon"
+    r = analyse_verdicts(d, 1080, 1920, seuils={"dark_abs": 40.0})
+    assert all(v == "too_dark" for v in r["verdicts"])
+
+
 def test_valid_measure_count_is_reported():
     d = _cache(n=30)
     d["frames"][5]["masse_captee"] = 0.10

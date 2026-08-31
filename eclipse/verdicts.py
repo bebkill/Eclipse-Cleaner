@@ -24,6 +24,15 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     Les valeurs None prennent les defauts du module pipeline.
     """
     from .pipeline import MARGE_HALO, SEUIL_MASQUE_DEFAUT, TOLERANCE_BORD_DEFAUT
+    from .presets import sort_defaults
+
+    profile = sort_defaults(donnees.get("preset", "custom"))
+    # Preset defaults sit UNDER explicit thresholds: a preset proposes,
+    # the operator disposes. The cache's preset drives both the renderer
+    # and the viewer through this single path.
+    seuils = dict(profile["seuils"], **(seuils or {})) or None
+    if seuil_masque is None:
+        seuil_masque = profile["seuil_masque"]
 
     tolerance_bord = (TOLERANCE_BORD_DEFAUT if tolerance_bord is None
                       else float(tolerance_bord))

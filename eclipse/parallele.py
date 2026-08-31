@@ -24,9 +24,9 @@ from operator import index
 
 import numpy as np
 
-from .locate import locate_center
+from .locate import locate_center_regime
 from .photometry import measure_photometry
-from .quality import masse_captee, measure_quality
+from .quality import CORONA_FACTOR, masse_captee, measure_quality
 from .render import apply_frame
 
 #: Sentinelle : deduire le nombre de processus du materiel.
@@ -116,20 +116,28 @@ def applique(fonction, travaux, processus, bloc=None):
 
 
 def mesure_frame(travail):
-    """Mesures d'une frame, pour la passe 1. travail = (rgb, rayon).
+    """Mesures d'une frame, pour la passe 1. travail = (rgb, rayon, params).
+
+    params: resolved presets.analysis_params dict (vote regime and light
+    threshold). The winning regime is returned so the cache can carry it:
+    quality reads a bright disc inside r but a dark disc's light lives in
+    the corona ring (see quality.measure_quality / CORONA_FACTOR).
 
     Rend les valeurs BRUTES : c'est l'appelant qui les met en forme pour le
     cache (voir pipeline._ou_none). La fonction reste ainsi purement
     calculatoire, ce qui la rend testable seule et remplacable par un backend
     accelere.
     """
-    rgb, rayon = travail
+    rgb, rayon, params = travail
     gray = rgb.astype(np.float32).mean(axis=2)
-    cx, cy, conf = locate_center(gray, rayon)
+    (cx, cy, conf), regime = locate_center_regime(gray, rayon,
+                                                  params["vote"])
+    capture_radius = rayon * (CORONA_FACTOR if regime == "dark" else 1.0)
     return {
-        "cx": cx, "cy": cy, "conf": conf,
-        "q": measure_quality(gray, cx, cy, rayon),
-        "m": masse_captee(gray, cx, cy, rayon),
+        "cx": cx, "cy": cy, "conf": conf, "regime": regime,
+        "q": measure_quality(gray, cx, cy, rayon, regime=regime),
+        "m": masse_captee(gray, cx, cy, capture_radius,
+                          seuil_lumiere=params["light_threshold"]),
         "p": measure_photometry(rgb, cx, cy, rayon),
     }
 

@@ -23,7 +23,7 @@ import numpy as np
 from . import langues
 from .decisions import DECISIONS_DEFAUT_NOM, applique, charger, diagnostique
 from .io import FrameReader, FrameWriter, PngSequenceWriter, probe
-from .locate import estimate_radius
+from .locate import estimate_radius, scan_radius
 from .parallele import applique as applique_travaux
 from .parallele import (PROCESSUS_DEFAUT, mesure_frame, nombre_processus,
                         rend_frame)
@@ -62,7 +62,13 @@ from .viewer import sert
 # le schema et la signature de la SOURCE, laquelle n'a pas bouge. Sans cette
 # incrementation, le viewer aurait annonce « analyse deja faite » et le
 # correctif serait reste inerte, sans qu'aucun signal ne le dise.
-SCHEMA_VERSION = 5
+#
+# Version 6: the cache carries the eclipse profile ("preset",
+# "analysis_params") and each frame its winning vote regime ("regime").
+# cx/cy/conf/masse_captee/disk_p90 all change VALUE under non-custom
+# profiles, and even custom caches gain fields: same trap as versions
+# 3-5, a v5 cache re-read silently would leave every profile inert.
+SCHEMA_VERSION = 6
 FRAMES_ECHANTILLON_RAYON = 300
 
 # Fraction de la source couverte par la fenetre de recadrage par defaut.
@@ -258,8 +264,16 @@ def charger_cache(cache_path, source):
 
 
 def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
-            progression=None):
+            progression=None, preset="custom", seuil_lumiere=None):
     """Passe 1 : mesure chaque frame et ecrit le cache.
+
+    preset : nom de profil d'eclipse (voir presets.PRESET_NAMES). Il choisit
+    les STRATEGIES de la passe 1 — masque eclaire, estimation du rayon,
+    regime de vote, seuil de lumiere — et est consigne dans le cache : les
+    mesures en dependent, un cache d'un autre profil ne peut donc pas servir
+    (voir render).
+    seuil_lumiere : remplace le seuil de lumiere du profil (voir
+    quality.masse_captee).
 
     processus : nombre de travailleurs pour le calcul par frame ; par defaut
     1, soit le chemin sequentiel. Le defaut de la BIBLIOTHEQUE est deliberement
@@ -273,6 +287,11 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     de frames n'est connu qu'a la fin de la boucle. Ce rappel est aussi le
     point d'annulation du moteur de taches — ce qu'il leve remonte.
     """
+    from .presets import analysis_params
+    params = analysis_params(preset)
+    if seuil_lumiere is not None:
+        params = dict(params, light_threshold=float(seuil_lumiere))
+
     # Valide avant de decoder quoi que ce soit : sinon --processus 0 ne
     # echouerait qu'apres l'estimation du rayon, 300 frames plus tard.
     nb = nombre_processus(processus)
@@ -288,7 +307,15 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     if radius is None:
         with FrameReader(source, width=lw, height=lh) as reader:
             grays = (f.astype(np.float32).mean(axis=2) for f in reader)
-            r = estimate_radius(islice(grays, FRAMES_ECHANTILLON_RAYON))
+            echantillon = islice(grays, FRAMES_ECHANTILLON_RAYON)
+            if params["radius_mode"] == "scan":
+                # A dozen frames spread over the sample window: the scan
+                # costs ~30 votes per frame, never per sequence frame.
+                sampled = list(islice(echantillon, 0, None, 25))
+                r = scan_radius(sampled, vote=params["vote"])
+            else:
+                r = estimate_radius(echantillon,
+                                    lit_mode=params["lit_mode"])
     else:
         # Meme rapport exact que dans render(), et non 1/scale : les
         # dimensions d'analyse sont arrondies au pixel pair.
@@ -300,7 +327,8 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     # donc le generateur et son pool avec elle.
     with FrameReader(source, width=lw, height=lh) as reader, \
          closing(applique_travaux(
-             mesure_frame, ((rgb, r) for rgb in reader), nb)) as mesures:
+             mesure_frame, ((rgb, r, params) for rgb in reader),
+             nb)) as mesures:
         # Le parent decode et distribue ; les travailleurs calculent. Les
         # resultats reviennent dans l'ordre des frames, ce qui rend le cache
         # identique a celui du chemin sequentiel.
@@ -311,6 +339,7 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
                 "cx": None if not np.isfinite(mes["cx"]) else float(mes["cx"]),
                 "cy": None if not np.isfinite(mes["cy"]) else float(mes["cy"]),
                 "conf": float(mes["conf"]),
+                "regime": mes["regime"],
                 "disk_p90": _ou_none(q["disk_p90"]),
                 "limb_sharpness": _ou_none(q["limb_sharpness"]),
                 "flare_ratio": _ou_none(q["flare_ratio"]),
@@ -326,6 +355,7 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     print(f"{len(frames)} frames, rayon apparent estime a {r:.1f} px")
 
     donnees = {"schema": SCHEMA_VERSION, "source": _signature_source(source),
+               "preset": preset, "analysis_params": params,
                "scale": scale, "radius": r, "width": lw, "height": lh,
                "fps": info["fps"], "frames": frames}
     with open(cache_path, "w", encoding="utf-8") as f:
@@ -347,7 +377,7 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
           taille_sortie=None, interp_max=INTERP_MAX_DEFAUT,
           tolerance_bord=None, frames_dir=None,
           interp_deplacement_max=INTERP_DEPLACEMENT_MAX_DEFAUT,
-          seuil_masque=None,
+          seuil_masque=None, preset=None,
           decisions_path=None, sans_decisions=False,
           depassement_butee=None,
           couleur=None, couleur_fenetre=None, couleur_amplitude=None,
@@ -381,6 +411,9 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
     seuil_masque : fraction minimale de lumiere que le masque solaire doit
     capturer pour qu'une mesure de centre entre dans la trajectoire (voir
     quality.masse_captee) ; par defaut SEUIL_MASQUE_DEFAUT.
+    preset : si fourni, le profil d'eclipse attendu ; le cache est refuse
+    s'il a ete analyse sous un autre. Par defaut None, soit le profil du
+    cache, quel qu'il soit.
     decisions_path : fichier de decisions manuelles (voir decisions.py) a
     superposer aux verdicts automatiques ; par defaut
     decisions.DECISIONS_DEFAUT_NOM s'il existe. Incompatible avec
@@ -414,6 +447,11 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
             f"Cache d'analyse absent ou perime : {cache_path}. "
             f"Lancer d'abord : python -m eclipse analyze {source}"
         )
+    if preset is not None and donnees.get("preset") != preset:
+        raise ValueError(
+            f"Le cache {cache_path} a ete analyse avec le preset "
+            f"{donnees.get('preset')!r}, pas {preset!r}. Relancer : "
+            f"python -m eclipse analyze {source} --preset {preset}")
 
     frames = donnees["frames"]
     n = len(frames)
@@ -641,12 +679,15 @@ def main(argv=None):
                    help="Rayon apparent en pixels pleine resolution, "
                         "si l'estimation automatique echoue")
     _ajoute_processus(a)
+    _ajoute_preset(a)
+    _ajoute_seuil_lumiere(a)
 
     r = sous.add_parser("render", help="Passe 2 : trier, stabiliser, encoder")
     r.add_argument("source")
     r.add_argument("sortie")
     r.add_argument("--cache", default="analysis.json")
     _ajoute_processus(r)
+    _ajoute_preset(r)
     _ajoute_seuils(r)
     _ajoute_cadrage(r)
 
@@ -660,6 +701,8 @@ def main(argv=None):
     x.add_argument("--scale", type=float, default=None)
     x.add_argument("--radius", type=float, default=None)
     _ajoute_processus(x)
+    _ajoute_preset(x)
+    _ajoute_seuil_lumiere(x)
     _ajoute_seuils(x)
     _ajoute_cadrage(x)
 
@@ -676,6 +719,7 @@ def main(argv=None):
     # viewer contre les seuils par defaut, silencieusement (finding 1).
     # _ajoute_cadrage fournit deja --decisions ; --sans-decisions n'a pas de
     # sens ici et est refuse plus bas.
+    _ajoute_preset(v)
     _ajoute_seuils(v)
     _ajoute_cadrage(v)
 
@@ -687,14 +731,18 @@ def main(argv=None):
 
     try:
         if args.commande == "analyze":
+            # or "custom" : la detection automatique du profil arrive en
+            # tache 8, qui remplacera cette resolution par defaut.
             analyze(args.source, args.cache, args.scale, args.radius,
-                    processus=args.processus)
+                    processus=args.processus,
+                    preset=args.preset or "custom",
+                    seuil_lumiere=args.seuil_lumiere)
         elif args.commande == "render":
             render(args.source, args.sortie, args.cache, seuils or None,
                   taille=args.taille, taille_sortie=args.sortie_taille,
                   interp_max=args.interp_max, tolerance_bord=args.tolerance_bord,
                     interp_deplacement_max=args.interp_deplacement_max,
-                  seuil_masque=args.seuil_masque,
+                  seuil_masque=args.seuil_masque, preset=args.preset,
                   decisions_path=args.decisions_path,
                   sans_decisions=args.sans_decisions,
                   depassement_butee=args.depassement_butee,
@@ -741,11 +789,25 @@ def main(argv=None):
                 couleur_fenetre=args.couleur_fenetre,
                 couleur_amplitude=args.couleur_amplitude)
         else:
-            if charger_cache(args.cache, args.source) is None:
+            donnees_cache = charger_cache(args.cache, args.source)
+            if donnees_cache is None:
                 analyze(args.source, args.cache,
                         args.scale if args.scale is not None else 0.5,
-                        args.radius, processus=args.processus)
+                        args.radius, processus=args.processus,
+                        preset=args.preset or "custom",
+                        seuil_lumiere=args.seuil_lumiere)
             else:
+                # Meme controle que render : les mesures du cache dependent
+                # du profil, un cache d'un autre profil ne peut pas servir.
+                # Il est fait ICI, avant tout travail, pour que le message
+                # dise quoi relancer plutot que d'echouer au rendu.
+                if (args.preset is not None
+                        and donnees_cache.get("preset") != args.preset):
+                    raise ValueError(
+                        f"Le cache {args.cache} a ete analyse avec le preset "
+                        f"{donnees_cache.get('preset')!r}, pas "
+                        f"{args.preset!r}. Relancer : python -m eclipse "
+                        f"analyze {args.source} --preset {args.preset}")
                 print(f"Cache valide reutilise : {args.cache}")
                 if args.scale is not None or args.radius is not None:
                     print(
@@ -757,7 +819,7 @@ def main(argv=None):
                   taille=args.taille, taille_sortie=args.sortie_taille,
                   interp_max=args.interp_max, tolerance_bord=args.tolerance_bord,
                     interp_deplacement_max=args.interp_deplacement_max,
-                  seuil_masque=args.seuil_masque,
+                  seuil_masque=args.seuil_masque, preset=args.preset,
                   decisions_path=args.decisions_path,
                   sans_decisions=args.sans_decisions,
                   depassement_butee=args.depassement_butee,
@@ -790,6 +852,29 @@ def _ajoute_processus(parseur):
         help="Nombre de travailleurs pour le calcul par frame "
              "(defaut : un de moins que les coeurs logiques ; "
              "1 = chemin sequentiel)")
+
+
+def _ajoute_preset(parseur):
+    from .presets import PRESET_NAMES
+    parseur.add_argument(
+        "--preset", choices=PRESET_NAMES, default=None,
+        help="Profil d'eclipse : strategies d'analyse et seuils de tri "
+             "(defaut : detection automatique a l'analyse, preset du "
+             "cache au rendu)")
+
+
+def _ajoute_seuil_lumiere(parseur):
+    """--seuil-lumiere, pour analyze et run seulement.
+
+    C'est un parametre de PASSE 1 : il entre dans les mesures du cache
+    (quality.masse_captee), donc il n'a rien a faire sur render ni sur le
+    viewer, qui relisent ce cache sans remesurer.
+    """
+    parseur.add_argument("--seuil-lumiere", dest="seuil_lumiere", type=float,
+                         default=None,
+                         help="Fraction du maximum au-dela de laquelle un pixel "
+                              "compte comme lumiere pour la masse captee "
+                              "(defaut : celui du preset)")
 
 
 def _ajoute_seuils(parseur):

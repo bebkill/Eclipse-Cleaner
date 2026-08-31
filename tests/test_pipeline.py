@@ -7,7 +7,8 @@ from eclipse.io import FrameWriter, FrameReader, probe
 from eclipse.pipeline import (SCHEMA_VERSION, analyze, render, charger_cache, main,
                               SEUIL_MASQUE_DEFAUT, TOLERANCE_BORD_DEFAUT,
                               tailles_defaut)
-from tests.synth import make_frame
+from eclipse.presets import analysis_params
+from tests.synth import make_frame, make_moon_frame
 
 # Ancre sur la racine du depot, et non sur le repertoire courant : sinon le
 # test de fumee se sauterait silencieusement selon l'endroit d'ou pytest est
@@ -91,6 +92,62 @@ def test_analyze_ecrit_un_cache_complet(video_synthetique, tmp_path):
     for cle in ("cx", "cy", "conf", "disk_p90", "limb_sharpness",
                 "flare_ratio", "masse_captee", "level", "wb"):
         assert cle in relu["frames"][0]
+
+
+def test_cache_v6_carries_the_preset(video_synthetique, tmp_path):
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    d = json.load(open(cache, encoding="utf-8"))
+    assert d["schema"] == 6 == SCHEMA_VERSION
+    assert d["preset"] == "custom"
+    assert d["analysis_params"] == analysis_params("custom")
+    assert all(f["regime"] in ("bright", "dark") for f in d["frames"])
+
+
+def test_render_refuses_a_cache_from_another_preset(video_synthetique, tmp_path):
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    with pytest.raises(ValueError, match="preset"):
+        render(video_synthetique, str(tmp_path / "out.mp4"), cache,
+               preset="moon")
+
+
+def test_analyze_moon_preset_scans_the_radius(tmp_path):
+    """A sequence of half-shadowed moons: area mode underestimates, the
+    moon preset must land on the true radius."""
+    chemin = str(tmp_path / "moon.mp4")
+    with FrameWriter(chemin, width=270, height=480, fps=30.0) as w:
+        for i in range(30):
+            w.write(make_moon_frame(w=270, h=480,
+                                    center=(135.0 + i * 0.2, 240.0),
+                                    r=97.0, umbra=0.5, umbra_level=0.15))
+    cache = str(tmp_path / "a.json")
+    analyze(chemin, cache, scale=1.0, preset="moon")
+    d = json.load(open(cache, encoding="utf-8"))
+    assert abs(d["radius"] - 97.0) < 3.0
+    assert d["preset"] == "moon"
+
+
+def test_run_refuses_to_reuse_a_cache_from_another_preset(video_synthetique,
+                                                          tmp_path, capsys):
+    """The run branch checks the preset BEFORE reusing a cache, like render:
+    the measures depend on the profile, and the message must say what to
+    relaunch instead of failing halfway through the render."""
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
+                 "--cache", cache, "--taille", "60x100",
+                 "--preset", "moon", "--processus", "1"])
+    assert code == 1
+    erreur = capsys.readouterr().err
+    assert "preset" in erreur and "--preset moon" in erreur
+
+
+def test_cli_preset_flag_reaches_the_cache(video_synthetique, tmp_path, capsys):
+    cache = str(tmp_path / "a.json")
+    assert main(["analyze", video_synthetique, "--cache", cache,
+                 "--preset", "custom", "--processus", "1"]) == 0
+    assert json.load(open(cache, encoding="utf-8"))["preset"] == "custom"
 
 
 def test_charger_cache_rejette_un_schema_perime(video_synthetique, tmp_path):
@@ -1029,7 +1086,9 @@ def test_main_viewer_sans_source_passe_none(monkeypatch):
 def test_un_cache_d_avant_le_correctif_de_mesure_est_refuse(video_synthetique, tmp_path):
     """Les champs de mesure changent de VALEUR sans changer de nom ni de
     forme -- limb_sharpness au passage du percentile 90 au 98, puis cx quand
-    l'alignement a cesse de reprendre le x du pic concurrent.
+    l'alignement a cesse de reprendre le x du pic concurrent, puis toutes
+    les mesures quand le profil d'eclipse a choisi les strategies de la
+    passe 1 (schema 6).
 
     charger_cache ne valide que le schema et la signature de la SOURCE ;
     celle-ci n'ayant pas bouge, un cache d'avant le correctif serait relu en
@@ -1041,8 +1100,8 @@ def test_un_cache_d_avant_le_correctif_de_mesure_est_refuse(video_synthetique, t
     analyze(video_synthetique, cache, scale=1.0)
     with open(cache) as f:
         donnees = json.load(f)
-    assert donnees["schema"] == 5, "un cache neuf porte la version courante"
-    donnees["schema"] = 4                      # tel qu'ecrit avant le correctif
+    assert donnees["schema"] == 6, "un cache neuf porte la version courante"
+    donnees["schema"] = 5                      # tel qu'ecrit avant le correctif
     with open(cache, "w") as f:
         json.dump(donnees, f)
     assert charger_cache(cache, video_synthetique) is None
