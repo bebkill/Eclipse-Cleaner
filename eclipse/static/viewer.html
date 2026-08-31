@@ -529,10 +529,11 @@
   }
   /* Vide, cette zone doit disparaitre completement. C'est un conteneur
      flex et non une suite de marges : un enfant en display:none n'est pas
-     un element flex, il ne consomme donc PAS de gouttiere. Les quatre
-     enfants passent leur temps caches ([hidden] ou :empty) ; avec des
-     marges, chaque absence aurait laisse son blanc. #etat lui-meme n'est
-     jamais cache, poser un display dessus est donc sans danger. */
+     un element flex, il ne consomme donc PAS de gouttiere. Les cinq
+     enfants (#no-position ajoute depuis) passent leur temps caches
+     ([hidden] ou :empty) ; avec des marges, chaque absence aurait laisse
+     son blanc. #etat lui-meme n'est jamais cache, poser un display dessus
+     est donc sans danger. */
   #etat { display: flex; flex-direction: column; gap: 10px; }
   #erreur {
     padding: 9px 12px; border-radius: 8px;
@@ -544,6 +545,16 @@
     background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
   }
   #manquant p { margin: 0; }
+  /* Mirrors #manquant's panel look: #no-position is now a sibling, not a
+     child (see the HTML comment above it), so it needs its own copy of the
+     same padding/background/border rather than inheriting #manquant's.
+     No display: here, same reasoning as #resultat-tache below -- [hidden]
+     alone must decide visibility, and a display declaration at this
+     specificity would win over the browser's default and defeat it. */
+  #no-position {
+    margin: 0; padding: 9px 12px;
+    background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
+  }
   #avancement {
     display: none; align-items: center; gap: 12px;
     padding: 9px 12px; background: var(--panneau);
@@ -871,8 +882,16 @@ try {
         <em data-t="sans_source_lien">Choisir une source</em>
         <span data-t="sans_source_apres">dans le rail, a gauche, pour designer la video a traiter.</span></p>
       <p id="manque-prete"><span data-t="manque_prete_intro">Cette source n'est pas encore prete : </span><span id="liste-manque"></span></p>
-      <p id="no-position" hidden></p>
     </div>
+    <!-- Sibling of #manquant, NOT a child: its condition (d.pret ===
+         true) is the exact opposite of #manquant's, which chargeFrames
+         hides as soon as the source is ready (elManquant.hidden = d.pret).
+         An ancestor's [hidden] suppresses every descendant regardless of
+         its own [hidden] state, so living inside #manquant would make
+         this paragraph unshowable -- the same trap the comment near
+         #actions documents for the step buttons, which had to move out of
+         #manquant for the same reason. -->
+    <p id="no-position" hidden></p>
     <div id="avancement" hidden>
       <span id="avancement-genre"></span>
       <progress id="barre" max="100" value="0"></progress>
