@@ -1,5 +1,5 @@
 import numpy as np
-from tests.synth import make_frame
+from tests.synth import make_frame, make_moon_frame, make_totality_frame
 
 
 def test_disque_plein_a_l_aire_attendue():
@@ -67,3 +67,30 @@ def test_la_sortie_est_uint8_rgb():
     img = make_frame(w=64, h=48, center=(32.0, 24.0), r=10.0)
     assert img.shape == (48, 64, 3)
     assert img.dtype == np.uint8
+
+
+def test_moon_frame_has_a_lit_and_an_umbral_part():
+    img = make_moon_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                          umbra=0.5, umbra_level=0.15)
+    g = img.astype(np.float32).mean(axis=2)
+    # Lit half bright, umbral half dim but NOT black (it must stay above
+    # the sky so a max-relative threshold can still see the full disc).
+    assert g[100, 130] > 100.0            # lit side
+    assert 5.0 < g[100, 70] < 60.0        # umbral side: dim, present
+    assert g[100, 5] < 3.0                # sky stays black
+
+
+def test_moon_frame_umbra_is_reddened():
+    img = make_moon_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                          umbra=0.6, umbra_level=0.2)
+    r_, b_ = float(img[100, 70, 0]), float(img[100, 70, 2])
+    assert r_ > 1.5 * max(b_, 1.0)
+
+
+def test_totality_frame_is_dark_inside_bright_ring():
+    img = make_totality_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                              corona=0.5)
+    g = img.astype(np.float32).mean(axis=2)
+    assert g[100, 100] < 8.0                       # dark disc
+    assert g[100, 100 + 55] > 40.0                 # corona just outside
+    assert g[5, 5] < 2.0                           # far sky ~ black
