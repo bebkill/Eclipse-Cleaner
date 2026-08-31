@@ -130,17 +130,25 @@ def test_analyze_moon_preset_scans_the_radius(tmp_path):
 
 def test_run_refuses_to_reuse_a_cache_from_another_preset(video_synthetique,
                                                           tmp_path, capsys):
-    """The run branch checks the preset BEFORE reusing a cache, like render:
-    the measures depend on the profile, and the message must say what to
-    relaunch instead of failing halfway through the render."""
+    """The run branch checks the preset BEFORE announcing the reuse.
+
+    The refusal itself proves nothing about WHERE the check lives: render()
+    raises the very same ValueError (both go through
+    pipeline._verifie_preset), so deleting the run-branch check would still
+    give exit code 1 and the same stderr. What distinguishes the early check
+    is the stdout: run must not print « Cache valide reutilise » for a cache
+    it is about to refuse. That absence is the real assertion here.
+    """
     cache = str(tmp_path / "a.json")
     analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    capsys.readouterr()                       # jette la sortie de l'analyse
     code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
                  "--cache", cache, "--taille", "60x100",
                  "--preset", "moon", "--processus", "1"])
     assert code == 1
-    erreur = capsys.readouterr().err
-    assert "preset" in erreur and "--preset moon" in erreur
+    capture = capsys.readouterr()
+    assert "preset" in capture.err and "--preset moon" in capture.err
+    assert "Cache valide reutilise" not in capture.out
 
 
 def test_cli_preset_flag_reaches_the_cache(video_synthetique, tmp_path, capsys):

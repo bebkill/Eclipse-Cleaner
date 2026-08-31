@@ -263,6 +263,30 @@ def charger_cache(cache_path, source):
     return donnees
 
 
+def _verifie_preset(cache_path, source, donnees, preset):
+    """Raise unless the cache was analyzed under the expected profile.
+
+    The pass-1 measures DEPEND on the profile (vote regime, lit mask,
+    light threshold): serving a cache from another one would sort and
+    frame the sequence against measures that mean something else.
+    Deliberately NOT folded into charger_cache, whose contract is schema +
+    source only — the viewer relies on that (see
+    viewer._reglages_reanalyse).
+
+    preset None means "whatever the cache carries", the default at render.
+
+    Single-sourced here because both callers — render() and the `run`
+    cache-reuse branch — must tell the user the exact same thing. run()
+    checks BEFORE announcing the reuse, so that a refusal is not preceded
+    by a message claiming the cache is being reused.
+    """
+    if preset is not None and donnees.get("preset") != preset:
+        raise ValueError(
+            f"Le cache {cache_path} a ete analyse avec le preset "
+            f"{donnees.get('preset')!r}, pas {preset!r}. Relancer : "
+            f"python -m eclipse analyze {source} --preset {preset}")
+
+
 def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
             progression=None, preset="custom", seuil_lumiere=None):
     """Passe 1 : mesure chaque frame et ecrit le cache.
@@ -447,11 +471,7 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
             f"Cache d'analyse absent ou perime : {cache_path}. "
             f"Lancer d'abord : python -m eclipse analyze {source}"
         )
-    if preset is not None and donnees.get("preset") != preset:
-        raise ValueError(
-            f"Le cache {cache_path} a ete analyse avec le preset "
-            f"{donnees.get('preset')!r}, pas {preset!r}. Relancer : "
-            f"python -m eclipse analyze {source} --preset {preset}")
+    _verifie_preset(cache_path, source, donnees, preset)
 
     frames = donnees["frames"]
     n = len(frames)
@@ -797,17 +817,11 @@ def main(argv=None):
                         preset=args.preset or "custom",
                         seuil_lumiere=args.seuil_lumiere)
             else:
-                # Meme controle que render : les mesures du cache dependent
-                # du profil, un cache d'un autre profil ne peut pas servir.
-                # Il est fait ICI, avant tout travail, pour que le message
-                # dise quoi relancer plutot que d'echouer au rendu.
-                if (args.preset is not None
-                        and donnees_cache.get("preset") != args.preset):
-                    raise ValueError(
-                        f"Le cache {args.cache} a ete analyse avec le preset "
-                        f"{donnees_cache.get('preset')!r}, pas "
-                        f"{args.preset!r}. Relancer : python -m eclipse "
-                        f"analyze {args.source} --preset {args.preset}")
+                # Meme controle que render, et le MEME message (voir
+                # _verifie_preset), mais fait ICI : annoncer la reutilisation
+                # d'un cache qu'on s'apprete a refuser se contredirait.
+                _verifie_preset(args.cache, args.source, donnees_cache,
+                                args.preset)
                 print(f"Cache valide reutilise : {args.cache}")
                 if args.scale is not None or args.radius is not None:
                     print(
