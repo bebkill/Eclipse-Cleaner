@@ -139,8 +139,11 @@ def measure_quality(gray, cx, cy, r):
 SEUIL_LUMIERE = 0.35
 
 
-def masse_captee(gray, cx, cy, r):
+def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     """Fraction de la lumiere de l'image contenue dans le disque (cx, cy, r).
+
+    seuil_lumiere overrides SEUIL_LUMIERE: some profiles need the shadowed
+    part of the subject counted as light to capture, not background.
 
     Repond a une question que ni la confiance du vote ni le verdict de tri ne
     posent : le centre trouve explique-t-il l'image ? La confiance mesure la
@@ -170,7 +173,7 @@ def masse_captee(gray, cx, cy, r):
     pic = float(g.max())
     if pic <= 1e-6:
         return float("nan")
-    lumiere = g > SEUIL_LUMIERE * pic
+    lumiere = g > seuil_lumiere * pic
     masse = float(g[lumiere].sum())
     if masse <= 0.0:
         return float("nan")

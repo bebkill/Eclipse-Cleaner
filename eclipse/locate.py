@@ -21,9 +21,31 @@ def sobel(gray):
     return gx, gy
 
 
-def lit_mask(gray):
-    """Region eclairee : seuil a mi-chemin entre le fond et le p99."""
+#: "max" lit-mask mode: a pixel is lit above this fraction of the frame
+#: maximum. Exists because the percentile mode fails BOTH ways off the
+#: reference sequence (measured, spec 2026-08-31): on a small moon (1.7 %
+#: of the pixels) the p99 falls in the sky; on a large half-shadowed moon
+#: the halfway threshold cuts the umbral part (area radius 73-132 px for a
+#: constant 195 px disc). 0.08 sits under the umbral level of the measured
+#: videos (10-25 % of max) and above sensor noise on a black sky.
+#: [CALIBRER-T11]
+LIT_MAX_FRACTION = 0.08
+
+
+def lit_mask(gray, mode="percentile"):
+    """Region eclairee : seuil a mi-chemin entre le fond et le p99.
+
+    mode "max": threshold relative to the frame maximum instead, for
+    profiles whose subject may be small or partly shadowed (see
+    LIT_MAX_FRACTION). The default stays byte-identical to the historic
+    behaviour.
+    """
     g = gray.astype(np.float32)
+    if mode == "max":
+        pic = float(g.max())
+        if pic < 1e-6:
+            return np.zeros(g.shape, dtype=bool)
+        return g >= LIT_MAX_FRACTION * pic
     haut = float(np.percentile(g, 99.0))
     bas = float(np.percentile(g, 5.0))
     if haut - bas < 1e-6:
@@ -31,7 +53,7 @@ def lit_mask(gray):
     return g >= (bas + haut) * 0.5
 
 
-def estimate_radius(grays, n_candidats=50):
+def estimate_radius(grays, n_candidats=50, lit_mode="percentile"):
     """Rayon apparent du Soleil, estime sur les frames les plus pleines.
 
     Pour un disque plein, l'aire donne le rayon exactement. On retient les
@@ -42,8 +64,11 @@ def estimate_radius(grays, n_candidats=50):
     grays est consomme paresseusement : seules les aires sont retenues,
     jamais les images. Une sequence de 2556 frames en 540x960 pesant 4 Go,
     l'appelant doit passer un generateur, pas une liste.
+
+    lit_mode is forwarded to lit_mask, see its "max" mode.
     """
-    aires = np.array([float(lit_mask(g).sum()) for g in grays], dtype=np.float64)
+    aires = np.array([float(lit_mask(g, mode=lit_mode).sum()) for g in grays],
+                     dtype=np.float64)
     if not np.any(aires > 0):
         raise ValueError(
             "Aucune frame eclairee : impossible d'estimer le rayon. "

@@ -7,7 +7,7 @@ from eclipse.io import FrameReader
 from eclipse.locate import estimate_radius, locate_center, sobel
 from eclipse.quality import (measure_quality, classify, verdicts_hors_source,
                               SEUILS_DEFAUT, masse_captee, SEUIL_LUMIERE)
-from tests.synth import make_frame
+from tests.synth import make_frame, make_moon_frame
 from tests.test_pipeline import SOURCE_REELLE
 
 
@@ -199,6 +199,16 @@ def test_masse_captee_centre_non_fini():
 
 def test_masse_captee_image_noire_ne_leve_pas():
     assert np.isnan(masse_captee(np.zeros((80, 80), np.float32), 40.0, 40.0, 20.0))
+
+
+def test_masse_captee_light_threshold_is_a_parameter():
+    """At the default 0.35 x max, the umbral part of a half-shadowed moon
+    does not count as light; at 0.10 it does, and a correct center then
+    captures almost everything."""
+    img = make_moon_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                          umbra=0.5, umbra_level=0.15)
+    g = img.astype(np.float32).mean(axis=2)
+    assert masse_captee(g, 100.0, 100.0, 50.0, seuil_lumiere=0.10) > 0.95
 
 
 def test_masse_captee_est_bornee():

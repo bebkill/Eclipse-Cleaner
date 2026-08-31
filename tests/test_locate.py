@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from eclipse.locate import sobel, lit_mask, estimate_radius, locate_center
-from tests.synth import make_frame
+from tests.synth import make_frame, make_moon_frame
 
 
 def gris(img):
@@ -231,6 +231,38 @@ def test_un_petit_rayon_desactive_le_mecanisme():
     # au-dela du pic, et un vrai concurrent y redevient cherchable.
     acc[130, 100] = 90.0
     assert _concurrent_vertical(acc, 100, 100, 200.0) == (130, 100)
+
+
+def test_lit_mask_max_mode_sees_the_umbral_part():
+    """Percentile mode only sees the lit sliver of a half-shadowed moon;
+    max mode must cover the whole disc (measured failure: area-radius 73
+    to 132 px for a constant 195 px disc on the user's videos).
+    umbra_level 0.25: the umbral gray sits at ~14 % of the frame max
+    (umbra_wb dims the gray), comfortably above LIT_MAX_FRACTION."""
+    img = make_moon_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                          umbra=0.5, umbra_level=0.25)
+    g = gris(img)
+    aire_max = int(lit_mask(g, mode="max").sum())
+    attendu = np.pi * 50.0 ** 2
+    assert abs(aire_max - attendu) / attendu < 0.12
+
+
+def test_lit_mask_max_mode_on_a_black_frame_is_empty():
+    assert not lit_mask(np.zeros((60, 60), np.float32), mode="max").any()
+
+
+def test_lit_mask_default_mode_is_unchanged():
+    img = make_frame(w=200, h=200, center=(100.0, 100.0), r=40.0)
+    assert (lit_mask(gris(img)) == lit_mask(gris(img), mode="percentile")).all()
+
+
+def test_estimate_radius_max_mode_on_small_dim_moons():
+    """A small moon (1.7 % of the pixels, like Moon-Eclipse.mp4): the p99
+    falls in the sky and percentile mode underestimates; max mode holds."""
+    grays = [gris(make_moon_frame(w=360, h=640, center=(180.0, 320.0),
+                                  r=35.0, umbra=0.3, umbra_level=0.25))
+             for _ in range(10)]
+    assert abs(estimate_radius(grays, n_candidats=5, lit_mode="max") - 35.0) < 2.0
 
 
 def test_l_alignement_ne_deplace_pas_la_mesure_horizontale():
