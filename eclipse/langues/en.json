@@ -1,5 +1,5 @@
 {
- "titre_page": "Frame review",
+ "titre_page": "Eclipse Cleaner",
  "panneau_source_titre": "Source",
  "source_chargement": "Loading...",
  "source_aucune": "No source selected",
@@ -149,5 +149,11 @@
  "boite_titre": "Choose the video to process",
  "boite_filtre_videos": "Videos",
  "boite_filtre_tous": "All files",
- "version_infobulle": "Viewer version and git repository state"
+ "version_infobulle": "Viewer version and git repository state",
+ "type_libelle": "Eclipse type",
+ "type_sun": "Sun",
+ "type_moon": "Moon",
+ "type_planetary": "Planetary",
+ "type_custom": "Custom",
+ "type_auto": "Auto"
 }

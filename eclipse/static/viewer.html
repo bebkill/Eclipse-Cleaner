@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="fr">
 <meta charset="utf-8">
-<title>Revue des frames</title>
+<title>Eclipse Cleaner</title>
 <style>
   /* ------------------------------------------------------------------
      PALETTES. Deux themes complets. Le theme clair est la BASE, pose sur
@@ -723,7 +723,10 @@ try {
 </script>
 
 <aside id="rail">
-  <h1 data-t="titre_page">Revue des frames</h1>
+  <!-- NO data-t: the eclipse-type suffix is dynamic (see updateTitle),
+       same trap as #source-courante just below -- appliqueLangue's [data-t]
+       loop would overwrite the suffix on every language change. -->
+  <h1 id="rail-title">Eclipse Cleaner</h1>
 
   <!-- L'ETAPE 0. Le viewer peut s'ouvrir sur RIEN (« python -m eclipse
        viewer » sans argument) : la page disait alors « cette source n'est
@@ -754,6 +757,18 @@ try {
     <!-- role=status : l'attente pendant que la boite est ouverte et les
          refus doivent etre annonces, pas seulement peints. -->
     <div id="source-message" role="status" hidden></div>
+    <!-- Hidden until a source exists (see chargeFrames): the eclipse type
+         only makes sense once frames have been extracted from something. -->
+    <label id="eclipse-type-row" hidden>
+      <span data-t="type_libelle">Type d'éclipse</span>
+      <select id="eclipse-type">
+        <option value="auto" data-t="type_auto">Auto</option>
+        <option value="sun" data-t="type_sun">Soleil</option>
+        <option value="moon" data-t="type_moon">Lune</option>
+        <option value="planetary" data-t="type_planetary">Planétaire</option>
+        <option value="custom" data-t="type_custom">Personnalisé</option>
+      </select>
+    </label>
   </section>
 
   <section id="panneau-taches">
@@ -996,7 +1011,7 @@ function appliqueLangue() {
     el.textContent = t(el.dataset.t);
   for (const el of document.querySelectorAll("[data-t-title]"))
     el.title = t(el.dataset.tTitle);
-  document.title = t("titre_page");
+  updateTitle();
   if (typeof rafraichitTextesDynamiques === "function")
     rafraichitTextesDynamiques();
 }
@@ -1674,6 +1689,9 @@ const elNoPosition = document.getElementById("no-position");
 const elSourceCourante = document.getElementById("source-courante");
 const elChoisirSource = document.getElementById("choisir-source");
 const elSourceMessage = document.getElementById("source-message");
+const elRailTitle = document.getElementById("rail-title");
+const elEclipseType = document.getElementById("eclipse-type");
+const elTypeRow = document.getElementById("eclipse-type-row");
 
 // Les trois etapes, dans l'ordre du bandeau, et le bouton de chacune.
 const NOMS_ETAPES = ["vignettes", "analyse", "rendu"];
@@ -1714,6 +1732,29 @@ let genreEnCours = null;
 // Le chemin de la source courante, ou null quand le viewer est ouvert sur
 // rien. Lu par afficheSource et par demarre.
 let sourceCourante = null;
+
+// The preset object sent by /api/frames ({effectif, cache, suggere}), or
+// null on the no-source shape. Read by updateTitle for the rail title's
+// suffix, and by chargeFrames to preselect #eclipse-type.
+let currentPreset = null;
+
+// The rail title names the effective eclipse type: "Eclipse Cleaner -
+// Moon". Dynamic (no data-t on the h1, see its comment): the suffix
+// depends on state, so it is repainted here instead of by appliqueLangue's
+// [data-t] loop.
+function updateTitle() {
+  const base = t("titre_page");
+  const type = currentPreset && currentPreset.effectif;
+  // Composed key, held in a variable rather than concatenated straight
+  // into the call to t(): the latter would read, to _cles_employees
+  // (tests/test_langues.py), as a literal call on the "type_" prefix
+  // alone, demanding a table entry that will never exist -- same trap
+  // documented at libelleEtape / afficheTache's own prefix concatenations.
+  const cle = type ? "type_" + type : null;
+  const titre = cle ? base + " — " + t(cle) : base;
+  elRailTitle.textContent = titre;
+  document.title = titre;
+}
 
 // Vrai des que chargeFrames a rendu une premiere reponse. Lu par
 // rafraichitTextesDynamiques : chargeLangues tourne AVANT chargeFrames dans
@@ -1815,6 +1856,13 @@ async function chargeFrames() {
   // qu'elle est.
   sourceCourante = (d.source === undefined) ? null : d.source;
   afficheSource(sourceCourante);
+  // preset is absent on the no-source shape (T9). The row only makes sense
+  // once a source exists; the selector shows the effective preset, "auto"
+  // acting as the way back to letting the server pick.
+  currentPreset = d.preset || null;
+  elTypeRow.hidden = sourceCourante === null;
+  if (currentPreset) elEclipseType.value = currentPreset.effectif;
+  updateTitle();
   document.body.classList.toggle("pas-pret", !d.pret);
   elManquant.hidden = d.pret;
   elSansSource.hidden = sourceCourante !== null;
@@ -2518,6 +2566,17 @@ async function choisitSource(chemin) {
 }
 
 elChoisirSource.addEventListener("click", () => parcourt());
+
+// Switching preset can invalidate the cached analysis for one that no
+// longer matches: chargeFrames() re-reads the fresh step states from the
+// server rather than guessing them here.
+elEclipseType.addEventListener("change", async () => {
+  const r = await fetch("/api/preset", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({preset: elEclipseType.value}),
+  });
+  if (r.ok) await chargeFrames();
+});
 
 // Rattachement : au chargement de la page, AVANT tout le reste, savoir si
 // une tache tourne deja. L'etat vit entierement cote serveur : il suffit de

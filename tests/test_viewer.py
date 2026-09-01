@@ -2172,8 +2172,10 @@ def test_api_langues_rend_les_deux_tables():
         assert code == 200
         donnees = json.loads(corps)
         assert set(donnees) == {"fr", "en"}
-        assert donnees["fr"]["titre_page"]
-        assert donnees["en"]["titre_page"] != donnees["fr"]["titre_page"]
+        # titre_page itself is now "Eclipse Cleaner" in both tables (task
+        # 10): the two-language check picks another key instead.
+        assert donnees["fr"]["bouton_parcourir"]
+        assert donnees["en"]["bouton_parcourir"] != donnees["fr"]["bouton_parcourir"]
 
 
 def test_api_langues_ne_demande_pas_d_origine():
@@ -3303,3 +3305,16 @@ def test_api_preset_route(serveur):
     assert json.loads(corps)["preset"]["effectif"] == "moon"
     code, _ = _requete("POST", url + "/api/preset", {"preset": "pluton"})
     assert code == 400
+
+
+def test_the_page_and_state_agree_on_the_preset(serveur):
+    """The page reads d.preset and posts /api/preset: check the server
+    side of that contract end to end over HTTP."""
+    url, _, _ = serveur
+    _, corps = _get(url + "/api/frames")
+    avant = json.loads(corps)["preset"]["effectif"]
+    code, _ = _requete("POST", url + "/api/preset", {"preset": "planetary"})
+    assert code == 200
+    _, corps = _get(url + "/api/frames")
+    assert json.loads(corps)["preset"]["effectif"] == "planetary"
+    _requete("POST", url + "/api/preset", {"preset": avant})

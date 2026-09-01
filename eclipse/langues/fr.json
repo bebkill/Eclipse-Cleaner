@@ -1,5 +1,5 @@
 {
- "titre_page": "Revue des frames",
+ "titre_page": "Eclipse Cleaner",
  "panneau_source_titre": "Source",
  "source_chargement": "Chargement...",
  "source_aucune": "Aucune source choisie",
@@ -149,5 +149,11 @@
  "boite_titre": "Choisir la vidéo à traiter",
  "boite_filtre_videos": "Vidéos",
  "boite_filtre_tous": "Tous les fichiers",
- "version_infobulle": "Version du viewer et etat du depot git"
+ "version_infobulle": "Version du viewer et etat du depot git",
+ "type_libelle": "Type d'éclipse",
+ "type_sun": "Soleil",
+ "type_moon": "Lune",
+ "type_planetary": "Planétaire",
+ "type_custom": "Personnalisé",
+ "type_auto": "Auto"
 }
