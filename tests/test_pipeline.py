@@ -159,11 +159,20 @@ def test_cli_preset_flag_reaches_the_cache(video_synthetique, tmp_path, capsys):
 
 
 def test_analyze_without_preset_announces_the_detection(tmp_path, capsys):
+    """umbra_level 0.25, not 0.15: the synthetic umbra must be as dark as a
+    real one, no darker. Measured on the three real lunar videos (task 11),
+    the shadowed part of the disc sits at 10-40 % of the frame peak -- median
+    0.165 on Lunar-221924, 0.092 on Lunar-213307. An umbra_level of 0.15 puts
+    the synthetic gray at ~8.4 % of the peak, below anything measured, and
+    below detect.DIM_FRACTION: the umbra then never leaves the "dim" bucket
+    and the frame stops reading as a moon at all. Same value, for the same
+    reason, as the moon frame in test_detect.py.
+    """
     chemin = str(tmp_path / "moon.mp4")
     with FrameWriter(chemin, width=270, height=480, fps=30.0) as w:
         for u in (0.2, 0.4, 0.6, 0.8) * 3:
             w.write(make_moon_frame(w=270, h=480, center=(135.0, 240.0),
-                                    r=97.0, umbra=u, umbra_level=0.15))
+                                    r=97.0, umbra=u, umbra_level=0.25))
     cache = str(tmp_path / "a.json")
     assert main(["analyze", chemin, "--cache", cache,
                  "--processus", "1"]) == 0

@@ -60,7 +60,25 @@ def _grille(h, w):
 
 
 #: Capture radius factor for dark-regime frames: the light to capture is
-#: the corona around the disc, not the disc itself. [CALIBRER-T11]
+#: the corona around the disc, not the disc itself.
+#:
+#: Measured on m2-res_852p (a total solar eclipse, 901 dark-regime frames,
+#: masse_captee recomputed on 50 of them at the cached centres):
+#:
+#:     factor   1.0     1.2     1.4     1.6     1.8     2.0     2.5
+#:     median   0.001   0.435   0.913   1.000   1.000   1.000   1.000
+#:     >= 0.80  0.000   0.020   0.920   0.960   1.000   1.000   1.000
+#:
+#: Without the widening (1.0) the climax of the video scores essentially
+#: ZERO and every totality frame would be dropped from the trajectory. The
+#: knee is between 1.4 and 1.6, and 1.6 is the first factor that captures
+#: the ring whole -- median 1.000, p10 0.997.
+#:
+#: Deliberately not pushed to 1.8 or beyond for the last 4 %: the wider the
+#: capture mask, the less masse_captee can tell a right centre from a wrong
+#: one, and by 2.5 it returns 1.000 for every frame and has stopped
+#: measuring anything. The minimum factor that captures the corona is the
+#: one that keeps the check meaningful.
 CORONA_FACTOR = 1.6
 
 

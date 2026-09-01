@@ -21,16 +21,66 @@ _ANALYSIS_DEFAULTS = {
     "light_threshold": 0.35,    # quality.masse_captee light cut (x max)
 }
 
-# Initial values for moon are engineering estimates, measured and fixed
-# against the three real lunar videos in the calibration task [CALIBRER-T11]:
-# - light_threshold 0.10: the umbral part of the disc sits at 10-25 % of the
-#   bright limb on the measured videos; 0.35 only saw the lit sliver.
-# - dark_abs 5.0: a fully umbral moon is dim by nature, 40.0 rejected it.
+# Calibrated against the five real videos (task 11, 2026-09-01). What the
+# measurements settled, profile by profile:
+#
+# moon -- radius_mode "scan" is the whole fix, and it is worth more than any
+#   threshold. Against an independent ground truth (the radius at which the
+#   azimuthally averaged profile falls to half its interior level) the scan
+#   lands at 195.7 px for a measured 196.2 on Lunar-213307 (-0.3 %) and at
+#   41.9 for a measured 42.5 on Moon-Eclipse (-1.5 %), while the lit-area
+#   estimate reads 118 and 29 -- and DRIFTS as the umbra advances, from 178
+#   down to 110 px across Lunar-213307 alone (see locate.LIT_MAX_FRACTION).
+#   Effect on Moon-Eclipse, where the old pipeline scored a masse_captee
+#   median of 0.673 with a single frame in 1010 above the sorting threshold:
+#   median 0.996, and 1010 frames in 1010 above it.
+#
+#   No light_threshold override. 0.10 was carried here on the assumption that
+#   0.35 "only saw the lit sliver"; measurement refutes it. The three lunar
+#   videos have a BLACK sky (p99.9 of the sky measures 0.000 of the frame
+#   peak on Lunar-213307 and Moon-Eclipse), so no background light competes
+#   with the disc and the cut has almost nothing to separate. Where it does
+#   bite it bites the wrong way: on Lunar-221924, whose hazy frames put sky
+#   light as high as 0.26 of the peak, moving 0.10 -> 0.35 lifts 98 sampled
+#   frames above the 0.80 sorting threshold and drops NONE (frames under it:
+#   99 -> 1 of 1757 sampled), because the haze counted as light sat outside
+#   the disc and only ever subtracted. On the other two the verdicts are
+#   identical either way (2495/2592 and 981/1010 kept), the median merely
+#   rising from 0.9970 to 0.9987 and from 0.9884 to 0.9959. Inheriting the
+#   default is therefore both simpler and measurably better.
+#
+#   dark_abs 5.0 (against the 40.0 default) is real and stays: a fully umbral
+#   moon is dim by nature. It keeps 623 frames more on Lunar-221924 (7498
+#   against 6875) and 28 more on Moon-Eclipse (981 against 953). The measured
+#   plateau runs from 0.0 to 10.0 -- identical verdicts throughout -- and 20.0
+#   already costs 100 frames, so 5.0 sits mid-plateau rather than on an edge.
+#
+#   No seuil_masque override: swept from 0.50 to 0.95 it moves nothing at all
+#   on Lunar-213307 and Moon-Eclipse (masse_captee is bimodal there, ~0.34 or
+#   ~0.99, and the gap between is empty), and on Lunar-221924 it is not even
+#   monotonic (71.1 % kept at 0.80, 72.8 % at 0.70, 73.3 % at 0.90). Nothing
+#   in the measurements picks a value, so the default 0.80 stands.
+#
+# sun -- light_threshold 0.70, against the 0.35 default. A totality filmed
+#   without a solar filter carries a halo through its partial phases: on
+#   m2-res_852p the light above 0.35*peak reaches 1.47 r at its p90 and
+#   1.68 r at its maximum, so a disc-sized mask captured only half of it and
+#   the frames scored a masse_captee median of 0.513 -- under the 0.80
+#   threshold, which threw away a centre that was in fact CORRECT (an
+#   independent re-scan puts it at the same place to within a pixel).
+#   Measured at 0.70, the knee of the sweep (0.50 -> 0.598, 0.60 -> 0.730,
+#   0.70 -> 0.898, and no further gain above): partial-phase frames rise to a
+#   median of 0.900 with 0.997 of them above the threshold, totality frames
+#   from 0.948 to 0.996 above it, valid measures from 872 to 1275 of 1284,
+#   frames rejected as hors_source from 302 to 28, frames kept from 916 to
+#   1180. The whole partial phase enters the render instead of being dropped.
+#   Left at the knee rather than pushed higher: at 0.90 every frame scores
+#   1.000 and the measure stops discriminating at all.
 _PRESETS = {
     "custom": {},
-    "sun": {"radius_mode": "scan", "vote": "dual"},
+    "sun": {"radius_mode": "scan", "vote": "dual",
+            "light_threshold": 0.70},
     "moon": {"lit_mode": "max", "radius_mode": "scan",
-             "light_threshold": 0.10,
              "seuils": {"dark_abs": 5.0}},
     "planetary": {"lit_mode": "max", "radius_mode": "scan"},
 }

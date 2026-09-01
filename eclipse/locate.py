@@ -28,7 +28,26 @@ def sobel(gray):
 #: the halfway threshold cuts the umbral part (area radius 73-132 px for a
 #: constant 195 px disc). 0.08 sits under the umbral level of the measured
 #: videos (10-25 % of max) and above sensor noise on a black sky.
-#: [CALIBRER-T11]
+#:
+#: CALIBRATION VERDICT (task 11, 2026-09-01): the mask is a real
+#: improvement on the percentile one, and it is still not enough. Swept
+#: against an independently measured true radius, the AREA method under
+#: this mask never comes close on an eclipsed disc:
+#:
+#:     fraction        0.02    0.04    0.08    0.10    0.15    0.20
+#:     Lunar-213307   -5.6 %  -7.7 % -10.8 % -12.8 % -17.1 % -21.8 %
+#:     Moon-Eclipse  -37.0 % -38.0 % -40.2 % -41.0 % -43.8 % -46.6 %
+#:
+#: (percentile mode, for scale: -39.7 % and -32.3 %). No fraction rescues
+#: it, because the error is not a threshold error: the lit AREA shrinks as
+#: the umbra advances while the disc does not, so the estimate drifts
+#: within a single video -- 178 px down to 110 across Lunar-213307, for a
+#: disc that stays at 196. The vote scan lands at -0.3 % and -1.5 % on the
+#: same two videos, which is why every profile setting lit_mode "max" also
+#: sets radius_mode "scan" (see presets), and why no shipped profile
+#: currently reaches this constant at all. 0.08 is left as measured: it is
+#: the fallback for an explicit area+max combination, and the sweep gives
+#: no ground to prefer another value on a path nothing takes.
 LIT_MAX_FRACTION = 0.08
 
 
