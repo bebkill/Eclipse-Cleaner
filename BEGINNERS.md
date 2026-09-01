@@ -81,7 +81,7 @@ python -m eclipse viewer
 A page opens in your web browser. From there, no more commands — everything is buttons:
 
 1. Click **Browse…** and pick your eclipse video.
-2. Run the three steps shown on the page: extract the thumbnails, analyze the frames, produce the final video.
+2. Run the three steps shown on the page: extract the thumbnails, analyze the frames, produce the final video. The eclipse type — sun, moon, or a planetary transit — is detected automatically at the analysis step; if the suggestion looks wrong, change it in the Source panel.
 3. The cleaned video is written **next to your original**, with `-clean` added to its name (e.g. `myeclipse-clean.mp4`).
 
 Keep the terminal window open while you use Eclipse Cleaner — it's the engine running behind the page. When you're done, simply close the browser tab and the terminal window.

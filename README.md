@@ -27,6 +27,7 @@ I tried to fix it with the tools available (SIRIL and PIPP), but I probably didn
 
 ## What it does
 
+- **Adapts to what's actually eclipsing** — sun, moon, or a planetary transit each fail differently, so an eclipse-type preset picks the right measurement strategy and sorting defaults for each. The type is detected automatically and always overridable. See [Eclipse types and presets](#eclipse-types-and-presets).
 - **Sorts the frames** — only irreparable frames are rejected: blur, darkness, glare, failed disk localization. A badly framed frame is *not* a defective frame; the stabilizer fixes the position.
 - **Locks the solar disk to the center** — a fixed-radius directed Hough vote finds the disk even on a thin crescent, and tolerates clouds masking part of the limb.
 - **Moves the frame like a camera operator would** — the crop window is planned, bounded softly against the source edges, and absorbs the tracking re-acquisition jumps (hundreds of pixels in a single frame) instead of jerking.
@@ -120,6 +121,8 @@ The CLI flags are in French (see [Known limitations](#known-limitations)); here 
 | Flag | Meaning |
 |---|---|
 | `--processus N` | Number of worker processes (default: logical cores − 1; `1` = sequential) |
+| `--preset sun\|moon\|planetary\|custom` | Eclipse-type profile — see [Eclipse types and presets](#eclipse-types-and-presets) (default: automatic detection at analysis, the cache's own preset at render) |
+| `--seuil-lumiere F` | `analyze`/`run` only — fraction of the frame's peak counted as "light" for the mask-capture measurement (default: the preset's own value) |
 | `--radius R` | Apparent solar radius in pixels, if automatic estimation fails |
 | `--taille WxH` | Crop-window size (default: 7/9 of the source, same aspect ratio) |
 | `--sortie-taille WxH` | Encoded output size (default: same as the source) |
@@ -134,10 +137,45 @@ The CLI flags are in French (see [Known limitations](#known-limitations)); here 
 | `--dark-rel`, `--dark-abs`, `--blur-rel`, `--flare-rel`, `--conf-min`, `--ilot-min` | Sorting thresholds (darkness, blur, glare, localization confidence, minimal kept-run length) |
 | `--decisions FILE` / `--sans-decisions` | Use a specific manual-review file / ignore manual reviews entirely |
 
+## Eclipse types and presets
+
+A solar crescent, a shadowed moon and a small bright planetary disc do not fail the same way: a threshold set tuned for one can leave another with an empty light mask or an inverted vote. A **preset** therefore fixes, per eclipse type, both the pass-1 measurement strategies (baked into the analysis cache) and the pass-2 sorting defaults (which plain CLI flags can still override without invalidating the cache):
+
+| Preset | lit mode | radius mode | vote | `--seuil-lumiere` | `--dark-abs` | `--seuil-masque` |
+|---|---|---|---|---|---|---|
+| `sun` | percentile | scan | dual | 0.70 | 40.0 | 0.80 |
+| `moon` | max | scan | bright | 0.35 | 5.0 | 0.80 |
+| `planetary` | max | scan | bright | 0.35 | 40.0 | 0.80 |
+| `custom` | percentile | area | bright | 0.35 | 40.0 | 0.80 |
+
+- **lit mode** — how the illuminated region is thresholded to estimate the apparent radius: `percentile` (midway between the frame's background and its 99th percentile, the historic behavior) or `max` (relative to the frame's peak instead), needed when the subject can be small or largely shadowed.
+- **radius mode** — `area` turns the lit region's area into a radius (exact for a full disc, but drifts as an eclipse's umbra advances) or `scan`, which finds the radius that maximizes the directed Hough-vote confidence (accurate to within about ±1.5 % on the calibration videos even as the umbra grows).
+- **vote** — the Hough-vote regime used to find the disc center: `bright` (a lit disc), `dark` (a dark disc ringed by light — a solar totality, where the limb gradient points outward), or `dual` (evaluates both per frame and keeps the sharper peak, needed when a video crosses from crescent to totality and back).
+- `custom` reproduces the tool's original, pre-eclipse-types behavior exactly (byte-identical on the reference solar sequence).
+
+For a **custom analysis**, or to understand what moving a preset's own defaults does, here is what the code documents about each sorting/analysis threshold:
+
+| Option | Default | Documented range / behavior | Effect of moving it |
+|---|---|---|---|
+| `--dark-rel` | 0.35 (fraction of the frame's local median `disk_p90`) | Not swept in the calibration; no documented bound. | Higher requires a frame to stay closer to its own local brightness reference to avoid `too_dark`; lower tolerates more local dimming. |
+| `--dark-abs` | 40.0 (5.0 under the `moon` preset) | On the calibration videos, every value from 0.0 to 10.0 gives identical verdicts, and 20.0 already costs measurably more kept frames — the `moon` preset's 5.0 sits mid-plateau, not on an edge. | Absolute brightness floor below which a frame is rejected outright, regardless of its local reference; needed low for a fully-umbral moon, whose darkest kept frames are dim by nature. |
+| `--blur-rel` | 0.40 (fraction of the local median `limb_sharpness`) | Measured on the reference sequence: raising it to 0.50 wrongly rejected the last, naturally softer sunset frames; lowering it below 0.40 rejected no additional frame. | Higher is stricter about limb sharpness relative to the local reference; pushed too high it starts rejecting frames that are only softer for a legitimate reason (the horizon eating the limb, a thin crescent). |
+| `--flare-rel` | 3.0 (multiple of the local median `flare_ratio`) | Not swept in the calibration; no documented bound. | Higher tolerates more light captured far from the disc (glare, a lit cloud) before rejecting as `flare`; lower is stricter. |
+| `--conf-min` | 0.02 (minimum Hough-vote confidence) | Not swept, but a documented weak spot: on the reference sequence, frames with a wrongly-placed center still scored 0.072–0.094 — well above this default. | This alone rarely tells a right center from a wrong one; `--seuil-masque` (see below) is the measurement that actually catches a center that doesn't explain the image. |
+| `--ilot-min` | 1 (island removal effectively disabled) | Neutral by design: on a full human review of the reference sequence, all 29 one-frame "islands" the old, stricter setting would have removed turned out to be real, wanted keeps. | Raising it (e.g. 5) drops short kept runs bordered on both sides by at least that many rejected frames — worth reactivating only if a video produces genuine one-frame flicker. |
+| `--seuil-masque` | 0.80 (fraction of the frame's light the disc mask must capture) | On the reference sequence, the 33 clear failures all score under 0.50; between 0.50 and 0.92 the scores spread continuously rather than falling into two clusters, so no single cutoff in that band is objectively "the" right one. | Higher trusts a center only if the mask explains a larger share of the frame's light; too high starts discarding correct centers whenever the lit area legitimately shrinks (deep crescent, an unfiltered totality's halo — see `--seuil-lumiere` below). |
+| `--seuil-lumiere` | preset-dependent: 0.35 (`custom`/`moon`/`planetary`), 0.70 (`sun`) | Measured on a solar-totality video: 0.60 → a `masse_captee` median of 0.730, 0.70 → 0.898 (the knee), no further gain above; by 0.90 every frame scores 1.000 and the measurement stops discriminating at all. | Fraction of a frame's peak brightness counted as "light" when checking whether the disc mask captures it (pass 1, baked into the cache). Too low on an unfiltered totality lets the corona's halo escape a disc-sized mask and wrongly fails a correct center; too high saturates and the check stops telling correct centers from wrong ones. |
+| `--tolerance-bord` | 5.0 px (disc clipping tolerated at the source edge before rejection) | Measured on a 799 px reference disc: 25 px is 3 % of the diameter and visibly clipped, 5 px (0.6 %) is not; kept-frame counts rise slowly with it (1785 at 0 px, 1805 at 5 px, 1846 at 10 px, 1896 at 25 px). An unrelated edge-replication safety margin also stops fully protecting the frame past a source-geometry-dependent point (around 37 px on that same video). | Higher tolerates more clipping of the disc by the source edge before a frame is rejected as `hors_source`, trading fewer rejected frames against visible cropping once it grows large relative to the disc. |
+
+**Automatic detection, and how to override it.** `analyze` and `run` probe a spread of sample frames across the source and print the detected type before analyzing — the CLI prints, for example, `Type d'eclipse detecte : moon`. Detection looks at the sky background (bright daylight/halo vs. a black sky), the disc's own internal contrast (a shadow crossing it), a size cutoff for a small planetary disc, and, as a tie-break, a warm color cast (a filtered sun). It is a *suggestion*, never applied silently and never final: pass `--preset sun|moon|planetary|custom` on the command line to force one, or use the selector in the viewer's Source panel, which shows the suggested type, the type currently in force, and the type the cache on disk was actually analyzed under. Because the preset drives pass-1 measurement strategies, **changing it — from the CLI or the viewer — always requires a fresh analysis**: the cache records its own preset and refuses to be reused under a different one, with a message describing what to relaunch.
+
 ## Known limitations
 
 - **Command-line messages are in French** (the viewer itself is fully bilingual). Internationalizing the CLI is a welcome contribution.
 - **Clipped highlights cannot be reconstructed** — exposure is re-leveled, but detail lost to saturation stays lost.
+- **A solar totality's corona can be blown out by brightness normalization.** Photometry itself is untouched by the eclipse-type feature; this is an existing limitation that a totality simply makes more visible.
+- **The `planetary` preset has never been calibrated against real footage** — only against synthetic frames. If you have real planetary or transit footage, [open an issue](https://github.com/bebkill/Eclipse-Cleaner/issues) with a sample: it's the fastest way to get it tuned.
+- **On a partial-only solar video, automatic detection selects the `sun` preset**, whose sorting is slightly stricter than the historic (`custom`) behavior — 1661 vs. 1726 frames kept on the reference sequence. Pass `--preset custom` to reproduce the exact pre-preset result.
 - **Two color renditions can coexist in one film** if a solar filter was removed mid-sequence. That is what really happened in front of the camera, so it is kept, like cloud crossings.
 - The viewer's **Browse…** dialog needs a graphical session (it uses the system file dialog via `tkinter`). On a headless machine, pass the video path on the command line instead.
 - On **macOS**, the Browse… dialog is disabled for now: opening it from the viewer would crash Python (macOS only allows system windows on the main thread — see [#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)). Pass the video path on the command line instead: `python -m eclipse viewer path/to/video.mp4`. A native macOS dialog is planned ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)).

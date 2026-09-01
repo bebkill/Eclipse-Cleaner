@@ -81,7 +81,7 @@ python -m eclipse viewer
 Une page s'ouvre dans votre navigateur web. À partir de là, plus aucune commande — tout se fait avec des boutons :
 
 1. Cliquez sur **Parcourir…** et choisissez votre vidéo d'éclipse.
-2. Lancez les trois étapes affichées sur la page : extraire les vignettes, analyser les frames, produire la vidéo finale.
+2. Lancez les trois étapes affichées sur la page : extraire les vignettes, analyser les frames, produire la vidéo finale. Le type d'éclipse — Soleil, Lune ou transit planétaire — est détecté automatiquement à l'étape d'analyse ; si la suggestion semble fausse, changez-la dans le panneau Source.
 3. La vidéo nettoyée est écrite **à côté de votre originale**, avec `-clean` ajouté à son nom (ex. `moneclipse-clean.mp4`).
 
 Gardez la fenêtre du terminal ouverte pendant que vous utilisez Eclipse Cleaner — c'est le moteur qui tourne derrière la page. Quand vous avez terminé, fermez simplement l'onglet du navigateur et la fenêtre du terminal.
