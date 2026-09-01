@@ -338,12 +338,16 @@ class Porteur:
                  preset=None):
         #: The eclipse profile asked for on the command line, None when the
         #: operator did not name one. Kept apart from preset_choisi so that
-        #: "auto" from the page really CLEARS the choice down to detection,
-        #: instead of silently falling back to the command line's.
+        #: "auto" from the page drops the PAGE's choice only: it falls back
+        #: to this one when it was given, and to the cache's preset or
+        #: detection otherwise. The full order of precedence, resolved in
+        #: _pose and construit_etat, is: page choice > command line > cache >
+        #: detection > "custom".
         self.preset_cli = preset
         #: The profile chosen from the page (POST /api/preset), None until
         #: someone chooses one. It wins over the command line: it is the
-        #: more recent intent.
+        #: more recent intent. Reset by change_source -- a choice made in the
+        #: page belongs to the video it was made for.
         self.preset_choisi = None
         #: Detection results, memoised BY SOURCE PATH: classify_video
         #: decodes 24 frames, and _pose runs on every reload (end of every
@@ -492,9 +496,27 @@ class Porteur:
         Rien n'est efface : le cache et les decisions de la source
         precedente restent ou ils sont, et y revenir les retrouve.
         """
+        # A preset chosen in the page belongs to the video it was chosen
+        # FOR: it was read off that video's frames. Carried over, "moon"
+        # picked for A would silently force moon on B and suppress B's own
+        # detection -- a wrong profile is a wrong set of pass-1 strategies,
+        # so it is a wrong analysis, not a cosmetic default. Switching
+        # sources therefore returns to the command line, the new source's
+        # cache, or detection.
+        # Cleared BEFORE _pose, which reads it to build the state, and put
+        # back if _pose refuses: that call leaves the porteur exactly where
+        # it was (see its docstring), and a mistyped path must not silently
+        # drop the profile chosen for the video still on screen.
+        ancien_choix = self.preset_choisi
+        self.preset_choisi = None
         derives = chemins_derives(chemin)
-        self._pose(chemin, derives["cache_path"], derives["decisions_path"],
-                   derives["dossier_vignettes"])
+        try:
+            self._pose(chemin, derives["cache_path"],
+                       derives["decisions_path"],
+                       derives["dossier_vignettes"])
+        except BaseException:
+            self.preset_choisi = ancien_choix
+            raise
         # Au terminal EN PLUS du corps de /api/frames : la bascule peut
         # orpheliner le tri de la ligne de commande, et l'operateur qui a
         # lance « viewer A.mp4 » regarde ce terminal-la. Ici et non dans
@@ -1542,8 +1564,10 @@ def fabrique_handler(porteur, moteur):
         def _regle_preset(self, requete):
             """Switches the porteur to this eclipse profile.
 
-            "auto" is a value like any other here: it clears the choice and
-            gives detection (or the cache) the last word again.
+            "auto" is a value like any other here: it drops the page's
+            choice, which falls back to the command line's preset when one
+            was given, and to the cache's preset or detection otherwise
+            (page choice > command line > cache > detection > "custom").
 
             A running task is a REFUSAL, unlike /api/couleur: the profile
             picks the pass-1 strategies the measures come from, so switching

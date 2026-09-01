@@ -3268,6 +3268,33 @@ def test_choosing_another_preset_makes_the_analysis_stale(tmp_path):
     assert porteur.etat["pret"]
 
 
+def test_a_page_preset_choice_does_not_follow_the_next_source(tmp_path):
+    """A preset chosen in the page belongs to the video it was chosen for.
+
+    Carried over, "moon" picked for A would force moon on B AND suppress
+    B's own detection -- the profile picks the pass-1 strategies, so this is
+    a wrong analysis, not a cosmetic default.
+    """
+    a = _cree_video(tmp_path, "a.mp4")
+    b = _cree_video(tmp_path, "b.mp4")
+    cache_a = str(tmp_path / "a.json")
+    analyze(a, cache_a, scale=1.0, preset="custom")
+    porteur = Porteur(a, cache_a, str(tmp_path / "d.json"),
+                      str(tmp_path / "v"))
+    porteur.regle_preset("moon")
+    assert porteur.etat["preset"]["effectif"] == "moon"
+
+    porteur.change_source(b)
+    # B has no cache: its profile comes from ITS OWN detection, falling back
+    # to "custom" -- never from the choice made for A. Written against the
+    # triplet rather than a hard-coded name, so the test says "B decides for
+    # itself" and does not pin what detection makes of a synthetic video.
+    p = porteur.etat["preset"]
+    assert p["cache"] is None
+    assert p["effectif"] == (p["suggere"] or "custom")
+    assert porteur.preset_choisi is None
+
+
 def test_api_preset_route(serveur):
     url, _, _ = serveur
     code, _ = _requete("POST", url + "/api/preset", {"preset": "moon"})
