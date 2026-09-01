@@ -151,6 +151,45 @@ def test_run_refuses_to_reuse_a_cache_from_another_preset(video_synthetique,
     assert "Cache valide reutilise" not in capture.out
 
 
+def test_run_refuses_to_reuse_a_cache_with_another_light_threshold(
+        video_synthetique, tmp_path, capsys):
+    """Name concordance is not enough: the resolved PARAMETERS must agree.
+
+    --seuil-lumiere is a pass-1 parameter (quality.masse_captee): a cache
+    measured at the preset's own cut says something else than one measured
+    at 0.90. Reusing it would sort and frame the sequence against measures
+    the flag claims to have changed -- silently, since the preset NAME
+    still matches. Same shape as the preset refusal: exit 1, the reason on
+    stderr, and no « Cache valide reutilise » on stdout.
+    """
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    capsys.readouterr()                       # jette la sortie de l'analyse
+    code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
+                 "--cache", cache, "--taille", "60x100",
+                 "--preset", "custom", "--seuil-lumiere", "0.9",
+                 "--processus", "1"])
+    assert code == 1
+    capture = capsys.readouterr()
+    assert "--seuil-lumiere 0.9" in capture.err
+    assert "Cache valide reutilise" not in capture.out
+
+
+def test_run_reuses_a_cache_whose_light_threshold_matches(video_synthetique,
+                                                          tmp_path, capsys):
+    """An EQUAL value is not a discordance: the cache still serves."""
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom",
+            seuil_lumiere=0.5)
+    capsys.readouterr()
+    code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
+                 "--cache", cache, "--taille", "60x100",
+                 "--preset", "custom", "--seuil-lumiere", "0.5",
+                 "--processus", "1"])
+    assert code == 0
+    assert "Cache valide reutilise" in capsys.readouterr().out
+
+
 def test_cli_preset_flag_reaches_the_cache(video_synthetique, tmp_path, capsys):
     cache = str(tmp_path / "a.json")
     assert main(["analyze", video_synthetique, "--cache", cache,

@@ -263,7 +263,7 @@ def charger_cache(cache_path, source):
     return donnees
 
 
-def _verifie_preset(cache_path, source, donnees, preset):
+def _verifie_preset(cache_path, source, donnees, preset, seuil_lumiere=None):
     """Raise unless the cache was analyzed under the expected profile.
 
     The pass-1 measures DEPEND on the profile (vote regime, lit mask,
@@ -275,6 +275,15 @@ def _verifie_preset(cache_path, source, donnees, preset):
 
     preset None means "whatever the cache carries", the default at render.
 
+    seuil_lumiere: the light cut EXPLICITLY requested on the command line,
+    if any. The profile name alone is not enough — --seuil-lumiere
+    overrides the profile's own cut, so two caches carrying the same name
+    can hold different measures. A non-None value that disagrees with the
+    cache's analysis_params is refused for exactly the same reason as a
+    preset mismatch; an equal one is simply satisfied, in silence. None
+    means "whatever the cache carries" (render and the viewer never
+    remeasure, so they never pass one).
+
     Single-sourced here because both callers — render() and the `run`
     cache-reuse branch — must tell the user the exact same thing. run()
     checks BEFORE announcing the reuse, so that a refusal is not preceded
@@ -285,6 +294,15 @@ def _verifie_preset(cache_path, source, donnees, preset):
             f"Le cache {cache_path} a ete analyse avec le preset "
             f"{donnees.get('preset')!r}, pas {preset!r}. Relancer : "
             f"python -m eclipse analyze {source} --preset {preset}")
+    if seuil_lumiere is not None:
+        cache_seuil = (donnees.get("analysis_params") or {}).get(
+            "light_threshold")
+        if cache_seuil != float(seuil_lumiere):
+            raise ValueError(
+                f"Le cache {cache_path} a ete analyse avec un seuil de "
+                f"lumiere de {cache_seuil}, pas {float(seuil_lumiere)}. "
+                f"Relancer : python -m eclipse analyze {source} "
+                f"--seuil-lumiere {seuil_lumiere:g}")
 
 
 def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
@@ -833,8 +851,11 @@ def main(argv=None):
                 # Meme controle que render, et le MEME message (voir
                 # _verifie_preset), mais fait ICI : annoncer la reutilisation
                 # d'un cache qu'on s'apprete a refuser se contredirait.
+                # args.seuil_lumiere too: given but discordant, it must not
+                # pass in silence — the cache would be reused with measures
+                # the flag claims to have changed (see _verifie_preset).
                 _verifie_preset(args.cache, args.source, donnees_cache,
-                                args.preset)
+                                args.preset, args.seuil_lumiere)
                 print(f"Cache valide reutilise : {args.cache}")
                 if args.scale is not None or args.radius is not None:
                     print(

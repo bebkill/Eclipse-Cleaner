@@ -761,6 +761,22 @@ def test_reanalysis_settings_drop_the_radius_on_preset_change(tmp_path):
     assert "radius" not in autres and autres.get("scale") == 1.0
 
 
+def test_reanalysis_settings_carry_the_cache_light_threshold(tmp_path):
+    """« Refaire l'analyse » must not shift masse_captee in silence.
+
+    A cache analyzed with an explicit --seuil-lumiere carries it in
+    analysis_params. Re-analyzing from the page under the SAME preset but
+    at the preset's own cut would remeasure masse_captee elsewhere, moving
+    the verdicts -- the very inversion _reglages_reanalyse exists to
+    prevent for the analysis scale.
+    """
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0, preset="custom", seuil_lumiere=0.42)
+    reglages = viewer._reglages_reanalyse(src, cache, "custom")
+    assert reglages["seuil_lumiere"] == 0.42
+
+
 def test_relance_de_l_analyse_conserve_la_resolution_du_cache(
         serveur_avec_moteur, tmp_path):
     """« Refaire l'analyse » pouvait INVERSER le sens des decisions prises.

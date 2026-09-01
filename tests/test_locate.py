@@ -254,6 +254,11 @@ def test_lit_mask_max_mode_on_a_black_frame_is_empty():
     assert not lit_mask(np.zeros((60, 60), np.float32), mode="max").any()
 
 
+def test_lit_mask_refuses_an_unknown_mode():
+    with pytest.raises(ValueError, match="inconnu"):
+        lit_mask(np.zeros((10, 10), np.float32), mode="mediane")
+
+
 def test_lit_mask_default_mode_is_unchanged():
     img = make_frame(w=200, h=200, center=(100.0, 100.0), r=40.0)
     assert (lit_mask(gris(img)) == lit_mask(gris(img), mode="percentile")).all()

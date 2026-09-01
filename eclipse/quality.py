@@ -81,6 +81,13 @@ def _grille(h, w):
 #: one that keeps the check meaningful.
 CORONA_FACTOR = 1.6
 
+#: Radius factor bounding the halo margin in measure_quality, used TWICE and
+#: necessarily by the same value: it is the outer edge of the dark-regime
+#: disk_p90 ring, and the inner edge of the flare exclusion. Let the two
+#: diverge and a dark frame would count its own corona as flare (ring outer
+#: bound above the flare cut) or read a band no measure covers (below it).
+FLARE_RING_FACTOR = 1.4
+
 
 def measure_quality(gray, cx, cy, r, regime="bright"):
     """Mesures de qualite d'une frame, autour du centre fourni.
@@ -114,7 +121,7 @@ def measure_quality(gray, cx, cy, r, regime="bright"):
         # A totality's subject is the corona: its light lives in the ring
         # OUTSIDE the dark disc. disk_p90 read inside would send the
         # climax of the video to too_dark; read it on the ring instead.
-        interieur = (dist > r) & (dist <= 1.4 * r)
+        interieur = (dist > r) & (dist <= FLARE_RING_FACTOR * r)
     else:
         interieur = dist <= r
     disk_p90 = float(np.percentile(g[interieur], 90.0)) if interieur.any() else 0.0
@@ -156,7 +163,7 @@ def measure_quality(gray, cx, cy, r, regime="bright"):
         limb_sharpness = 0.0
 
     # Eblouissement : masse lumineuse loin du disque, marge de halo exclue.
-    dehors = dist > 1.4 * r
+    dehors = dist > FLARE_RING_FACTOR * r
     if dehors.any() and disk_p90 > 1e-6:
         flare_ratio = float(g[dehors].mean()) / disk_p90
     else:

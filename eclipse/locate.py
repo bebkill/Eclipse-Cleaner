@@ -58,7 +58,13 @@ def lit_mask(gray, mode="percentile"):
     profiles whose subject may be small or partly shadowed (see
     LIT_MAX_FRACTION). The default stays byte-identical to the historic
     behaviour.
+
+    An unknown mode is refused rather than quietly served by the
+    percentile path: a typo would otherwise measure a whole sequence under
+    the wrong mask without a word.
     """
+    if mode not in ("percentile", "max"):
+        raise ValueError(f"Mode d'eclairement inconnu : {mode!r}")
     g = gray.astype(np.float32)
     if mode == "max":
         pic = float(g.max())

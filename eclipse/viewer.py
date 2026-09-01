@@ -851,6 +851,16 @@ def _reglages_reanalyse(source, cache_path, preset_effectif):
 
     preset_effectif: the profile the coming analysis will run under. The
     radius is NOT inherited across a profile change, see below.
+
+    The cache's light threshold is inherited on the same footing as the
+    scale, and for the same reason: a cache analyzed with an explicit
+    --seuil-lumiere carries a cut the profile does not, and remeasuring at
+    the profile's own cut would shift masse_captee — hence the verdicts,
+    hence the meaning of the stored decisions. It is inherited whenever
+    the cache carries one and the profile matches: passing back the value
+    the cache already holds is idempotent, so no comparison to the
+    profile's default is needed. Across a profile change it is dropped
+    with the radius: the new profile's own cut applies.
     """
     from .pipeline import charger_cache
 
@@ -869,6 +879,9 @@ def _reglages_reanalyse(source, cache_path, preset_effectif):
     largeur_analyse = donnees.get("width")
     if rayon is not None and largeur_analyse:
         reglages["radius"] = rayon * probe(source)["width"] / largeur_analyse
+    seuil = (donnees.get("analysis_params") or {}).get("light_threshold")
+    if seuil is not None:
+        reglages["seuil_lumiere"] = seuil
     return reglages
 
 
@@ -1186,6 +1199,10 @@ def _travail_rendu(porteur, moteur, ecraser, png):
             # que ce que l'utilisateur vient de revoir, et la revue humaine
             # part a la poubelle sans un mot (voir Porteur).
             comptes = render(etat["source"], partiel, cache_path,
+                             # Same concordance check as the CLI: the cache
+                             # must have been analyzed under the profile in
+                             # force, whatever POST got us here.
+                             preset=etat["preset"]["effectif"],
                              seuils=porteur.seuils,
                              tolerance_bord=porteur.tolerance_bord,
                              seuil_masque=porteur.seuil_masque,
