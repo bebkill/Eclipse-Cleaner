@@ -2569,13 +2569,23 @@ elChoisirSource.addEventListener("click", () => parcourt());
 
 // Switching preset can invalidate the cached analysis for one that no
 // longer matches: chargeFrames() re-reads the fresh step states from the
-// server rather than guessing them here.
+// server rather than guessing them here. Reload UNCONDITIONALLY, not only
+// on r.ok: a refusal (409 a task is running, 400) would otherwise leave
+// the <select> showing the value the operator just picked while the
+// server kept the old preset -- a silent desync until some unrelated
+// chargeFrames() call happened to fix it. Reloading on every outcome
+// either paints the new state or snaps the selector back to the server's
+// truth; no extra message needed, the snap-back IS the feedback.
 elEclipseType.addEventListener("change", async () => {
-  const r = await fetch("/api/preset", {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({preset: elEclipseType.value}),
-  });
-  if (r.ok) await chargeFrames();
+  try {
+    await fetch("/api/preset", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({preset: elEclipseType.value}),
+    });
+  } catch {
+    return signaleServeurInjoignable();
+  }
+  await chargeFrames();
 });
 
 // Rattachement : au chargement de la page, AVANT tout le reste, savoir si
