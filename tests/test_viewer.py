@@ -731,7 +731,7 @@ def test_reanalyse_reprend_l_echelle_et_le_rayon_du_cache(tmp_path):
     with open(cache, encoding="utf-8") as f:
         donnees = json.load(f)
 
-    reglages = _reglages_reanalyse(src, cache)
+    reglages = _reglages_reanalyse(src, cache, "custom")
     assert reglages["scale"] == 0.5
     # La formule d'analyze, rejouee : radius * (lw / width) doit redonner
     # exactement le rayon que le cache portait.
@@ -747,7 +747,18 @@ def test_reanalyse_reprend_l_echelle_et_le_rayon_du_cache(tmp_path):
 def test_reanalyse_sans_cache_valide_ne_reprend_rien(tmp_path):
     """Pas de cache, pas de reprise : les defauts d'analyze s'appliquent."""
     src = _cree_video(tmp_path)
-    assert _reglages_reanalyse(src, str(tmp_path / "absent.json")) == {}
+    assert _reglages_reanalyse(src, str(tmp_path / "absent.json"),
+                               "custom") == {}
+
+
+def test_reanalysis_settings_drop_the_radius_on_preset_change(tmp_path):
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0, preset="custom")
+    memes = viewer._reglages_reanalyse(src, cache, "custom")
+    autres = viewer._reglages_reanalyse(src, cache, "moon")
+    assert "radius" in memes
+    assert "radius" not in autres and autres.get("scale") == 1.0
 
 
 def test_relance_de_l_analyse_conserve_la_resolution_du_cache(
@@ -3226,3 +3237,42 @@ def test_la_page_porte_le_noeud_de_version_sans_data_t():
     debut = page.index('id="version"')
     balise = page[page.rindex("<", 0, debut):page.index(">", debut) + 1]
     assert "data-t=" not in balise, f"data-t interdit sur ce noeud : {balise}"
+
+
+def test_state_carries_the_preset_triplet(tmp_path):
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0, preset="custom")
+    genere(src, str(tmp_path / "v"), _signature_source(src))
+    porteur = Porteur(src, cache, str(tmp_path / "d.json"),
+                      str(tmp_path / "v"))
+    p = porteur.etat["preset"]
+    assert p["effectif"] == "custom" and p["cache"] == "custom"
+    corps = viewer._corps_frames(porteur.etat)
+    assert corps["preset"]["effectif"] == "custom"
+
+
+def test_choosing_another_preset_makes_the_analysis_stale(tmp_path):
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0, preset="custom")
+    genere(src, str(tmp_path / "v"), _signature_source(src))
+    porteur = Porteur(src, cache, str(tmp_path / "d.json"),
+                      str(tmp_path / "v"))
+    assert porteur.etat["pret"]
+    porteur.regle_preset("moon")
+    assert "analyse" in porteur.etat["manque"]
+    assert porteur.etat["preset"]["effectif"] == "moon"
+    # Back to the cache's preset: ready again, nothing was destroyed.
+    porteur.regle_preset("auto")
+    assert porteur.etat["pret"]
+
+
+def test_api_preset_route(serveur):
+    url, _, _ = serveur
+    code, _ = _requete("POST", url + "/api/preset", {"preset": "moon"})
+    assert code == 200
+    _, corps = _get(url + "/api/frames")
+    assert json.loads(corps)["preset"]["effectif"] == "moon"
+    code, _ = _requete("POST", url + "/api/preset", {"preset": "pluton"})
+    assert code == 400

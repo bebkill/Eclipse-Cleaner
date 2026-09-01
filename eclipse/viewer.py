@@ -159,7 +159,8 @@ def _signature_analyse(donnees):
 
 def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
                    seuils=None, tolerance_bord=None, seuil_masque=None,
-                   cadrage=None, couleur=None):
+                   cadrage=None, couleur=None,
+                   preset_demande=None, preset_suggere=None):
     """Ce que les routes ont besoin de connaitre, observe sans rien generer.
 
     Ne leve plus quand le cache manque, quand les vignettes manquent, ou
@@ -183,6 +184,12 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
     par le Porteur (defauts appliques ici pour un appel direct). Meme
     statut que le cadrage : aucun verdict n'en depend, le descripteur les
     enregistre.
+
+    preset_demande, preset_suggere: the eclipse profile explicitly asked for
+    (page or command line) and the one detection proposed, both resolved by
+    the Porteur - this function never probes. Together with the cache's own
+    preset they give the "preset" triplet the page reads, and the choice
+    wins over the cache: see the staleness rule below.
     """
     from .pipeline import _signature_source, charger_cache
 
@@ -192,6 +199,13 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
     info = probe(source)
     signature = _signature_source(source)
     donnees = charger_cache(cache_path, source)
+    preset_cache = donnees.get("preset") if donnees else None
+    effectif = preset_demande or preset_cache or preset_suggere or "custom"
+    if donnees is not None and preset_cache != effectif:
+        # The cache was measured under another profile: for THIS choice it
+        # is stale, exactly as if it were absent. Nothing is deleted -
+        # coming back to the cache's preset finds it intact.
+        donnees = None
     nb_vignettes = compte(dossier_vignettes)
 
     manque = []
@@ -219,6 +233,14 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
         "cache": donnees,
         "reglages": _reglages(seuils, tolerance_bord, seuil_masque, cadrage,
                               couleur),
+        # The three values the page needs to show a profile AND explain it:
+        # what is in force, what the cache on disk was measured with (None
+        # when there is none - it keeps its value when the mismatch above
+        # set that cache aside, which is precisely what lets the page say
+        # WHY the analysis reads as missing), and what detection proposed.
+        # French keys, like the rest of this state.
+        "preset": {"effectif": effectif, "cache": preset_cache,
+                   "suggere": preset_suggere},
     }
     if manque:
         return {**base, "verdicts": [], "mesures_valides": 0, "frames": [],
@@ -288,7 +310,8 @@ def _etat_vide():
             "etapes": {nom: "indisponible" for nom in ETAPES},
             "verdicts": [], "mesures_valides": 0, "frames": [], "fps": 30.0,
             "nb_frames_estime": 0, "signature": None,
-            "decisions_path": None, "dossier_vignettes": None}
+            "decisions_path": None, "dossier_vignettes": None,
+            "preset": {"effectif": "custom", "cache": None, "suggere": None}}
 
 
 class Porteur:
@@ -311,7 +334,22 @@ class Porteur:
                  taille=None, taille_sortie=None, interp_max=None,
                  interp_deplacement_max=None,
                  depassement_butee=None,
-                 couleur=None, couleur_fenetre=None, couleur_amplitude=None):
+                 couleur=None, couleur_fenetre=None, couleur_amplitude=None,
+                 preset=None):
+        #: The eclipse profile asked for on the command line, None when the
+        #: operator did not name one. Kept apart from preset_choisi so that
+        #: "auto" from the page really CLEARS the choice down to detection,
+        #: instead of silently falling back to the command line's.
+        self.preset_cli = preset
+        #: The profile chosen from the page (POST /api/preset), None until
+        #: someone chooses one. It wins over the command line: it is the
+        #: more recent intent.
+        self.preset_choisi = None
+        #: Detection results, memoised BY SOURCE PATH: classify_video
+        #: decodes 24 frames, and _pose runs on every reload (end of every
+        #: task, every colour change). Probing there would pay that cost
+        #: again and again for an answer that cannot change.
+        self._suggestions = {}
         #: Le cadrage, meme raison que les seuils etendue a la geometrie : le
         #: sous-parseur viewer accepte les memes options que render, et un
         #: utilisateur qui lance le viewer avec --taille 900x1600 puis clique
@@ -380,10 +418,23 @@ class Porteur:
         orthographe, plus de desalignement possible.
 
         """
+        from .pipeline import charger_cache
+
+        requested = self.preset_choisi or self.preset_cli
+        suggested = None
+        if (source is not None and requested is None
+                and charger_cache(cache_path, source) is None):
+            # No cache and no explicit choice: probe once per source. The
+            # cache's preset, when a cache exists, wins without probing.
+            if source not in self._suggestions:
+                from .detect import classify_video
+                self._suggestions[source] = classify_video(source)["type"]
+            suggested = self._suggestions[source]
         etat = _etat_vide() if source is None else construit_etat(
             source, cache_path, decisions_path, dossier_vignettes,
             self.seuils, self.tolerance_bord, self.seuil_masque, self.cadrage,
-            self.couleur)
+            self.couleur,
+            preset_demande=requested, preset_suggere=suggested)
         # Une DONNEE, pas un verdict : le fichier de decisions demande en
         # ligne de commande, que _tri_orpheline compare au chemin derive a
         # chaque requete. Le calcul n'est deliberement pas fige ici, voir
@@ -412,6 +463,16 @@ class Porteur:
         """
         self.couleur = {"actif": bool(actif), "fenetre": int(fenetre),
                         "amplitude": float(amplitude)}
+        self.recharge()
+
+    def regle_preset(self, value):
+        """Installs this preset choice ("auto" clears it) and reloads.
+
+        Nothing on disk is touched. The reload rebuilds the state, and with
+        it the staleness of an analysis measured under another profile (see
+        construit_etat): coming back to the cache's preset finds it whole.
+        """
+        self.preset_choisi = None if value == "auto" else value
         self.recharge()
 
     def change_source(self, chemin):
@@ -494,7 +555,11 @@ def _corps_frames(etat):
                  "nb_frames_estime": etat["nb_frames_estime"],
                  "etapes": etapes_, "divergentes": list(divergentes),
                  "couleur": etat["reglages"]["couleur"],
-                 "mesures_valides": etat["mesures_valides"]}
+                 "mesures_valides": etat["mesures_valides"],
+                 # On this form ESPECIALLY: a source that is not ready is
+                 # exactly where the profile matters, since it is what the
+                 # analysis about to run will be measured with.
+                 "preset": etat["preset"]}
         if avertissement:
             corps["avertissement"] = avertissement
         return corps
@@ -516,7 +581,8 @@ def _corps_frames(etat):
              "frames": frames, "etapes": etapes_,
              "divergentes": list(divergentes),
              "couleur": etat["reglages"]["couleur"],
-             "mesures_valides": etat["mesures_valides"]}
+             "mesures_valides": etat["mesures_valides"],
+             "preset": etat["preset"]}
     # Surface au client un fichier de decisions present mais refuse (schema
     # perime, source differente...) : sans ca l'utilisateur croit reviser
     # avec ses decisions passees alors qu'elles ont ete silencieusement
@@ -721,7 +787,7 @@ def _travail_vignettes(porteur, moteur):
     return travail, etat["nb_frames_estime"], lambda: compte(dossier)
 
 
-def _reglages_reanalyse(source, cache_path):
+def _reglages_reanalyse(source, cache_path, preset_effectif):
     """La resolution d'analyse a reprendre d'un cache valide, s'il y en a un.
 
     Sans cela, « Refaire l'analyse » peut RETOURNER LE SENS des decisions
@@ -760,12 +826,19 @@ def _reglages_reanalyse(source, cache_path):
     estimate_radius est deterministe et redonnerait la meme valeur — sauf si
     le cache a ete produit avec un --radius EXPLICITE, que le cache
     n'enregistre pas comme tel. Le reprendre couvre ce cas aussi.
+
+    preset_effectif: the profile the coming analysis will run under. The
+    radius is NOT inherited across a profile change, see below.
     """
     from .pipeline import charger_cache
 
     donnees = charger_cache(cache_path, source)
     if donnees is None:
         return {}
+    if donnees.get("preset") != preset_effectif:
+        # The radius was estimated under another strategy: reuse only the
+        # scale, and let the new profile's estimator run.
+        return {"scale": donnees["scale"]} if donnees.get("scale") else {}
     reglages = {}
     scale = donnees.get("scale")
     if scale is not None:
@@ -788,15 +861,20 @@ def _travail_analyse(porteur, moteur):
     # tache ; cette saisie ferme la fenetre qui reste entre son controle et
     # la bascule.
     cache_path = porteur.cache_path
+    # Taken WITH the state, for the same reason as cache_path: POST
+    # /api/preset can land between here and the thread starting, and the
+    # cache must record the profile these measures were actually taken
+    # under.
+    preset = etat["preset"]["effectif"]
     # Lu hors du fil de la tache : c'est une lecture, elle ne touche a rien
     # sur le disque, et un 409 Occupe n'a donc rien a annuler ici.
-    reglages = _reglages_reanalyse(etat["source"], cache_path)
+    reglages = _reglages_reanalyse(etat["source"], cache_path, preset)
 
     def travail():
         # Le total reste celui de l'estimation : analyze() n'en connait pas
         # (elle ne sait combien de frames qu'a la fin de sa boucle) et ne
         # passe qu'un compte fait.
-        analyze(etat["source"], cache_path, **reglages,
+        analyze(etat["source"], cache_path, **reglages, preset=preset,
                 progression=lambda fait, total=None: moteur.progression(fait))
 
     return travail, etat["nb_frames_estime"], None
@@ -1461,6 +1539,28 @@ def fabrique_handler(porteur, moteur):
             corps = json.dumps(porteur.couleur).encode("utf-8")
             return self._envoie(200, corps, "application/json")
 
+        def _regle_preset(self, requete):
+            """Switches the porteur to this eclipse profile.
+
+            "auto" is a value like any other here: it clears the choice and
+            gives detection (or the cache) the last word again.
+
+            A running task is a REFUSAL, unlike /api/couleur: the profile
+            picks the pass-1 strategies the measures come from, so switching
+            under a running analysis would write a cache whose "preset" is
+            not what its numbers were measured with. Same field as
+            _change_source, and the same one Moteur.lance raises Occupe on.
+            """
+            from .presets import PRESET_NAMES
+
+            value = requete.get("preset")
+            if value not in PRESET_NAMES + ("auto",):
+                return self._envoie(400, b"", "text/plain")
+            if moteur.etat()["etat"] == "en_cours":
+                return self._envoie(409, b"", "text/plain")
+            porteur.regle_preset(value)
+            return self._envoie(200, b"{}", "application/json")
+
         def _change_source(self, requete):
             """Bascule le porteur sur la video demandee.
 
@@ -1526,14 +1626,17 @@ def fabrique_handler(porteur, moteur):
             if self.path == "/api/parcourir":
                 return self._parcourir(etat, self._lit_corps_json() or {})
             if self.path not in ("/api/decision", "/api/source",
-                                 "/api/tache", "/api/couleur"):
+                                 "/api/tache", "/api/couleur",
+                                 "/api/preset"):
                 return self._envoie(404, b"", "text/plain")
-            # Une seule lecture du corps pour les quatre routes, et non une
+            # Une seule lecture du corps pour les cinq routes, et non une
             # par branche : c'est elle qui porte le plafond de taille, et le
             # flux ne se lit qu'une fois.
             requete = self._lit_corps_json()
             if requete is None:
                 return self._envoie(400, b"", "text/plain")
+            if self.path == "/api/preset":
+                return self._regle_preset(requete)
             if self.path == "/api/source":
                 return self._change_source(requete)
             if self.path == "/api/tache":
@@ -1576,7 +1679,8 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
          taille=None, taille_sortie=None, interp_max=None,
          interp_deplacement_max=None,
          depassement_butee=None,
-         couleur=None, couleur_fenetre=None, couleur_amplitude=None):
+         couleur=None, couleur_fenetre=None, couleur_amplitude=None,
+         preset=None):
     """Lance le serveur local et ouvre le navigateur.
 
     source : la video a revoir, ou None pour ouvrir le viewer sur rien et en
@@ -1601,6 +1705,12 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
     la meme raison que le cadrage — ils sement en plus les controles de la
     page, qui peut ensuite les modifier (POST /api/couleur).
 
+    preset : the eclipse profile named on the command line, or None to let
+    the cache - failing that, detection - decide. Same reason as the
+    cadrage: the viewer sub-parser has accepted --preset since it existed,
+    and swallowing it would run the page's analysis under another profile
+    than the one asked for. The page can still change it (POST /api/preset).
+
     moteur : moteur de taches a utiliser ; un neuf par defaut. L'injecter
     rend les tests possibles sans lancer de vrai traitement.
     """
@@ -1614,7 +1724,8 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
                       interp_deplacement_max=interp_deplacement_max,
                       depassement_butee=depassement_butee,
                       couleur=couleur, couleur_fenetre=couleur_fenetre,
-                      couleur_amplitude=couleur_amplitude)
+                      couleur_amplitude=couleur_amplitude,
+                      preset=preset)
     httpd = ThreadingHTTPServer(("127.0.0.1", port),
                                 fabrique_handler(porteur, moteur))
     url = f"http://127.0.0.1:{httpd.server_port}/"

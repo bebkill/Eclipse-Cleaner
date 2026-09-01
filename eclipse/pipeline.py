@@ -812,7 +812,8 @@ def main(argv=None):
                 depassement_butee=args.depassement_butee,
                 couleur=not args.sans_couleur,
                 couleur_fenetre=args.couleur_fenetre,
-                couleur_amplitude=args.couleur_amplitude)
+                couleur_amplitude=args.couleur_amplitude,
+                preset=args.preset)
         else:
             donnees_cache = charger_cache(args.cache, args.source)
             if donnees_cache is None:
