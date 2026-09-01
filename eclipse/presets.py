@@ -28,9 +28,11 @@ _ANALYSIS_DEFAULTS = {
 #   threshold. Against an independent ground truth (the radius at which the
 #   azimuthally averaged profile falls to half its interior level) the scan
 #   lands at 195.7 px for a measured 196.2 on Lunar-213307 (-0.3 %) and at
-#   41.9 for a measured 42.5 on Moon-Eclipse (-1.5 %), while the lit-area
-#   estimate reads 118 and 29 -- and DRIFTS as the umbra advances, from 178
-#   down to 110 px across Lunar-213307 alone (see locate.LIT_MAX_FRACTION).
+#   41.9 for a measured 42.5 on Moon-Eclipse (-1.5 %). The lit-area estimate
+#   not only misses, it DRIFTS as the umbra advances: across Lunar-213307 it
+#   slides from 122.7 px down to 71.5 for a disc that stays at 196.2, and on
+#   Moon-Eclipse it wanders between 27.8 and 36.8 for a disc of 42.5 (see
+#   locate.LIT_MAX_FRACTION, where the same sweep is run per mask mode).
 #   Effect on Moon-Eclipse, where the old pipeline scored a masse_captee
 #   median of 0.673 with a single frame in 1010 above the sorting threshold:
 #   median 0.996, and 1010 frames in 1010 above it.
@@ -41,13 +43,14 @@ _ANALYSIS_DEFAULTS = {
 #   peak on Lunar-213307 and Moon-Eclipse), so no background light competes
 #   with the disc and the cut has almost nothing to separate. Where it does
 #   bite it bites the wrong way: on Lunar-221924, whose hazy frames put sky
-#   light as high as 0.26 of the peak, moving 0.10 -> 0.35 lifts 98 sampled
-#   frames above the 0.80 sorting threshold and drops NONE (frames under it:
-#   99 -> 1 of 1757 sampled), because the haze counted as light sat outside
-#   the disc and only ever subtracted. On the other two the verdicts are
-#   identical either way (2495/2592 and 981/1010 kept), the median merely
-#   rising from 0.9970 to 0.9987 and from 0.9884 to 0.9959. Inheriting the
-#   default is therefore both simpler and measurably better.
+#   light as high as 0.26 of the peak, moving 0.10 -> 0.35 takes the frames
+#   falling under the 0.80 sorting threshold from 589 to 12 out of 10548, and
+#   the valid measures from 9959 to 10536 -- a full re-analysis, not a sample
+#   -- because the haze counted as light sat outside the disc and only ever
+#   subtracted. On the other two the verdicts are identical either way
+#   (2495/2592 and 981/1010 kept), the median merely rising from 0.9970 to
+#   0.9987 and from 0.9884 to 0.9959. Inheriting the default is therefore
+#   both simpler and measurably better.
 #
 #   dark_abs 5.0 (against the 40.0 default) is real and stays: a fully umbral
 #   moon is dim by nature. It keeps 623 frames more on Lunar-221924 (7498
