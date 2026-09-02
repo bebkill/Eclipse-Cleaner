@@ -444,22 +444,22 @@
     overflow-wrap: anywhere;
   }
   #source-message.refus { font-weight: 700; color: var(--rejet-texte); }
-  /* La video choisie prend plusieurs secondes a s'ouvrir (sonde ffmpeg +
-     detection du type d'eclipse, qui decode 24 frames) : sans ce spinner, la
-     page parait figee pendant tout ce temps -- c'est exactement le constat
-     utilisateur qui a fait naitre cette tache. Le rond tourne par une
-     bordure a trois cotes transparents et le quatrieme dans --accent ;
-     inline-block, avant le texte, jamais seul (le texte porte deja le sens,
-     le rond n'est qu'un renfort visuel). */
+  /* The chosen video takes several seconds to open (ffmpeg probe + eclipse
+     type detection, which decodes 24 frames): without this spinner, the
+     page looks frozen the whole time -- exactly the user report that gave
+     rise to this task. The ring spins via a border with three transparent
+     sides and the fourth in --accent; inline-block, before the text, never
+     alone (the text already carries the meaning, the ring is only a visual
+     reinforcement). */
   #source-message.attente::before {
     content: ""; display: inline-block; width: 10px; height: 10px;
     margin-right: 6px; vertical-align: -1px;
     border: 2px solid var(--bord-fort); border-top-color: var(--accent);
-    border-radius: 50%; animation: tourne 0.8s linear infinite;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
   }
-  @keyframes tourne { to { transform: rotate(360deg); } }
-  /* Le texte seul suffit a dire l'attente : pas de mouvement impose a qui
-     l'a demande reduit. */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* The text alone is enough to say "waiting": no motion imposed on
+     someone who asked for less of it. */
   @media (prefers-reduced-motion: reduce) {
     #source-message.attente::before { animation: none; }
   }
@@ -603,11 +603,11 @@
     background: var(--panneau); border: 1px solid var(--bord); font-size: 13px;
   }
 
-  /* Le lecteur de la video source brute : meme habillage que #manquant et
-     #no-position (fond --panneau, bordure --bord) pour rester un panneau
-     frere plutot qu'un element flottant. AUCUNE declaration de display :
-     l'element porte [hidden], meme piege deja documente trois fois dans ce
-     fichier. */
+  /* The raw source video player: same look as #manquant and #no-position
+     (--panneau background, --bord border) to stay a sibling panel rather
+     than a floating element. NO display: declaration here -- the element
+     carries [hidden], the same trap already documented three times in
+     this file. */
   #apercu-source {
     padding: 9px 12px;
     background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
@@ -618,9 +618,9 @@
   }
   #apercu-source summary:hover { color: var(--texte); }
   #apercu-source[open] summary { margin-bottom: 8px; }
-  /* Hauteur plafonnee : une source verticale grand format ne doit pas
-     pousser le reste de la colonne hors de l'ecran. max-width: 100% couvre
-     le cas horizontal, ou le rail est etroit. */
+  /* Height capped: a tall vertical source must not push the rest of the
+     column off-screen. max-width: 100% covers the horizontal case, where
+     the rail is narrow. */
   #apercu-video { display: block; max-width: 100%; max-height: 40vh; }
   #apercu-indisponible {
     margin: 8px 0 0; font-size: 12px; color: var(--texte-faible);
@@ -1910,21 +1910,21 @@ async function chargeFrames() {
   // qu'elle est.
   sourceCourante = (d.source === undefined) ? null : d.source;
   afficheSource(sourceCourante);
-  // Le lecteur brut suit sourceCourante, mais seulement quand elle a
-  // CHANGE : chargeFrames est aussi le sondage de fin de tache et le
-  // rappel apres chaque decision de la page, et re-timestamper l'URL a
-  // chaque appel relancerait la lecture en cours pour rien. Le cas que ce
-  // garde couvre en plus de choisitSource (qui a deja pointe le lecteur
-  // avant d'appeler chargeFrames, voir plus bas) est le premier chargement
-  // d'un viewer lance avec une source en argument de ligne de commande :
-  // derniereSourceApercu vaut encore son undefined initial, distinct du
-  // null de "pas de source", et la condition passe donc une fois.
-  if (sourceCourante !== derniereSourceApercu) {
+  // The raw player follows sourceCourante, but only when it CHANGES:
+  // chargeFrames is also the end-of-task poll and the callback after every
+  // decision on the page, and re-timestamping the URL on every call would
+  // restart the current playback for nothing. The case this guard covers
+  // besides choisitSource (which has already pointed the player before
+  // calling chargeFrames, see below) is the very first load of a viewer
+  // launched with a source as a command-line argument: lastPreviewSource
+  // is still its initial undefined, distinct from the "no source" null,
+  // so the condition passes exactly once.
+  if (sourceCourante !== lastPreviewSource) {
     if (sourceCourante === null) {
       elApercuVideo.pause();
-      derniereSourceApercu = null;
+      lastPreviewSource = null;
     } else {
-      pointeApercuSur(sourceCourante);
+      pointPreviewAt(sourceCourante);
     }
   }
   elApercuSource.hidden = sourceCourante === null;
@@ -2086,16 +2086,15 @@ let derniereManque = null;
 // rafraichitTextesDynamiques.
 let lastDiagnostic = null;
 
-// La source pour laquelle le lecteur brut (#apercu-video) a deja recu un
-// src, ou undefined tant qu'il n'en a jamais eu. Distinct de null (« pas de
-// source ») : un viewer lance avec une source en argument de ligne de
-// commande affiche sourceCourante non nulle des le tout premier appel de
-// chargeFrames, sans etre jamais passe par choisitSource -- c'est ce
-// undefined initial qui lui fait quand meme poser un src. Compare a
-// sourceCourante a chaque chargeFrames pour ne PAS re-timestamper l'URL (et
-// donc relancer la lecture) a chaque sondage /api/tache pendant qu'une tache
-// tourne sur la MEME source.
-let derniereSourceApercu = undefined;
+// The source for which the raw player (#apercu-video) has already received
+// a src, or undefined as long as it never has. Distinct from null ("no
+// source"): a viewer launched with a source as a command-line argument
+// shows a non-null sourceCourante from the very first chargeFrames call,
+// without ever going through choisitSource -- it is this initial undefined
+// that still makes it set a src. Compared against sourceCourante on every
+// chargeFrames to avoid re-timestamping the URL (and so restarting
+// playback) on every /api/tache poll while a task runs on the SAME source.
+let lastPreviewSource = undefined;
 
 // Le dernier message signale par signaleErreur, ou null si le bandeau est
 // vide. Une CLE (ou la liste de faits que le serveur envoie), jamais du
@@ -2166,11 +2165,11 @@ function majZoneLancement() {
   // des frames, evenements qui surviennent pendant que la boite du systeme
   // est ouverte, et qui rallumeraient sinon un bouton dont un second clic
   // partirait en 409.
-  // sourceEnOuverture, meme raison : un changement de langue pendant que le
-  // POST /api/source est en vol (la sonde ffmpeg dure plusieurs secondes)
-  // appelle aussi cette fonction via rafraichitTextesDynamiques, et sans ce
-  // troisieme drapeau elle rallumerait le bouton avant la fin de la sonde.
-  elChoisirSource.disabled = tacheEnCours || boiteOuverte || sourceEnOuverture;
+  // sourceOpening, same reason: a language switch while POST /api/source
+  // is in flight (the ffmpeg probe takes several seconds) also calls this
+  // function via rafraichitTextesDynamiques, and without this third flag
+  // it would re-enable the button before the probe finishes.
+  elChoisirSource.disabled = tacheEnCours || boiteOuverte || sourceOpening;
   // Depend de l'etat courant, donc AUCUN data-t-title : rappelee par
   // rafraichitTextesDynamiques via majZoneLancement elle-meme.
   elActions.title = tacheEnCours ? t("infobulle_tache_en_cours") : "";
@@ -2245,10 +2244,10 @@ function rafraichitTextesDynamiques() {
   if (derniereMessageSource) messageSource(derniereMessageSource.recette,
                                            derniereMessageSource.refus,
                                            derniereMessageSource.attente);
-  // Meme mecanique que lastDiagnostic ci-dessus : le refus de lecture du
-  // lecteur brut est compose une fois par l'ecouteur "error" et jamais
-  // retouche depuis.
-  if (apercuIndisponibleAffiche)
+  // Same mechanism as lastDiagnostic above: the raw player's playback
+  // refusal is composed once by the "error" listener and never touched
+  // again after that.
+  if (previewUnavailableShown)
     elApercuIndisponible.textContent = t("apercu_indisponible");
   majZoneLancement();
   if (typeof window.rafraichitTheme === "function") window.rafraichitTheme();
@@ -2551,12 +2550,12 @@ elAnnuler.addEventListener("click",
 // ouverte, refus de la boite ou de la source -- dans la nouvelle langue sans
 // reinterroger le serveur.
 //
-// `attente` (facultatif) pose le spinner CSS (#source-message.attente) :
-// UN SEUL appelant en a besoin aujourd'hui (choisitSource, pendant l'ouverture
-// de la video), mais il est retire par DEFAUT ici plutot que laisse a chaque
-// appelant de le faire -- sans quoi un message de refus qui suit une attente
-// (par exemple un fichier invalide apres l'ouverture) garderait le rond qui
-// tourne a cote d'un texte qui ne dit plus qu'on attend.
+// `attente` (optional) sets the CSS spinner (#source-message.attente): a
+// SINGLE caller needs it today (choisitSource, while the video opens), but
+// it is cleared by DEFAULT here rather than left to each caller to do --
+// without that, a refusal message following a wait (an invalid file right
+// after opening, say) would keep the spinning ring next to a text that no
+// longer says anything is being awaited.
 function messageSource(recette, refus, attente) {
   derniereMessageSource = recette ? { recette, refus, attente } : null;
   elSourceMessage.textContent = recette ? recette() : "";
@@ -2572,15 +2571,14 @@ function messageSource(recette, refus, attente) {
 // le meme onglet, ce que le serveur refuserait par un 409.
 let boiteOuverte = false;
 
-// Vrai pendant le POST /api/source : la sonde ffmpeg et la detection du
-// type d'eclipse (24 frames decodees) prennent plusieurs secondes, pendant
-// lesquelles un second clic sur "Parcourir..." ne peut que se faire
-// refuser par le serveur (409, une tache -- ici la bascule de source --
-// tourne deja). Meme role que boiteOuverte pour elChoisirSource.disabled
-// (voir majZoneLancement), un drapeau distinct parce que les deux fenetres
-// temporelles ne se recouvrent jamais mais doivent l'eteindre toutes les
-// deux.
-let sourceEnOuverture = false;
+// True during POST /api/source: the ffmpeg probe and the eclipse-type
+// detection (24 frames decoded) take several seconds, during which a
+// second click on "Browse..." can only be refused by the server (409, a
+// task -- here the source switch -- is already running). Same role as
+// boiteOuverte for elChoisirSource.disabled (see majZoneLancement), a
+// separate flag because the two time windows never overlap but both must
+// turn the button off.
+let sourceOpening = false;
 
 async function parcourt() {
   if (boiteOuverte) return;
@@ -2640,11 +2638,12 @@ async function parcourt() {
 }
 
 async function choisitSource(chemin) {
-  // POST /api/source probe ffmpeg puis, sans cache, decode 24 frames pour
-  // detecter le type d'eclipse (voir Porteur._pose) : plusieurs secondes
-  // sans aucun retour, le constat d'usage qui a fait naitre ce message et
-  // ce drapeau. `attente` (troisieme argument) pose le spinner CSS.
-  sourceEnOuverture = true;
+  // POST /api/source probes ffmpeg then, without a cache, decodes 24
+  // frames to detect the eclipse type (see Porteur._pose): several
+  // seconds with no feedback at all, the user report that gave rise to
+  // this message and this flag. `attente` (third argument) sets the CSS
+  // spinner.
+  sourceOpening = true;
   elChoisirSource.disabled = true;
   messageSource(() => t("source_ouverture"), false, true);
   let r;
@@ -2657,10 +2656,10 @@ async function choisitSource(chemin) {
     messageSource(null, false);
     return signaleServeurInjoignable();
   } finally {
-    sourceEnOuverture = false;
-    // Rendu a majZoneLancement, qui sait s'il y a une tache en cours : le
-    // rallumer inconditionnellement ici le rendrait cliquable pendant un
-    // rendu -- meme raison que dans parcourt().
+    sourceOpening = false;
+    // Left to majZoneLancement, which knows whether a task is running:
+    // unconditionally re-enabling it here would make it clickable during
+    // a render -- same reasoning as in parcourt().
     majZoneLancement();
   }
   if (!r.ok) {
@@ -2687,41 +2686,40 @@ async function choisitSource(chemin) {
   // de celle-ci : le moteur, lui, garde son instantane (constat de la
   // tache 6), la page n'a donc qu'a cesser de l'afficher.
   elResultatTache.hidden = true;
-  // Le lecteur brut : pointe sur la NOUVELLE source (le cache-buster fait
-  // que le navigateur ne sert pas la reponse de la source precedente depuis
-  // son cache HTTP -- l'URL elle-meme est constante d'une source a l'autre,
-  // voir GET /video) et deplie le panneau UNE FOIS pour ce changement. Nulle
-  // part ailleurs .open n'est touche : le pli reste ensuite au choix de
-  // l'utilisateur.
-  pointeApercuSur(chemin);
+  // The raw player: point it at the NEW source (the cache-buster ensures
+  // the browser does not serve the previous source's response from its
+  // HTTP cache -- the URL's path itself is constant across sources, see
+  // GET /video) and unfold the panel ONCE for this change. Nowhere else is
+  // .open touched: the fold state is then left to the user's choice.
+  pointPreviewAt(chemin);
   elApercuSource.open = true;
   await chargeFrames();
 }
 
-// Vrai apres que l'element <video> a signale une erreur de lecture pour la
-// source courante. Retenu comme derniereManque / lastDiagnostic plus haut :
-// rafraichitTextesDynamiques recompose ce texte-la dans la nouvelle langue
-// sans reinterroger le serveur ni relire la video.
-let apercuIndisponibleAffiche = false;
+// True once the <video> element has reported a playback error for the
+// current source. Retained like derniereManque / lastDiagnostic above:
+// rafraichitTextesDynamiques recomposes this text in the new language
+// without querying the server again or re-loading the video.
+let previewUnavailableShown = false;
 
-// Pointe le lecteur brut sur cette source et efface le refus eventuel de la
-// precedente. Facturee a part de choisitSource : chargeFrames() en a aussi
-// besoin, pour le cas d'un viewer lance avec une source deja en argument de
-// ligne de commande (aucun POST /api/source ne passe alors par choisitSource).
-function pointeApercuSur(source) {
+// Points the raw player at this source and clears any prior refusal.
+// Factored out of choisitSource: chargeFrames() also needs it, for a
+// viewer launched with a source already given as a command-line argument
+// (no POST /api/source ever goes through choisitSource in that case).
+function pointPreviewAt(source) {
   elApercuVideo.pause();
-  apercuIndisponibleAffiche = false;
+  previewUnavailableShown = false;
   elApercuIndisponible.hidden = true;
-  // Horodatage en requete, pas de contournement du cache HTTP par en-tete :
-  // l'URL du chemin est constante d'une source a l'autre (voir GET /video),
-  // et sans lui le navigateur reafficherait la video PRECEDENTE depuis son
-  // cache le temps que la reponse fraiche arrive.
+  // Timestamp on the query string, not a cache-defeating header: the
+  // path itself is constant across sources (see GET /video), and without
+  // it the browser would keep showing the PREVIOUS source from its cache
+  // until the fresh response arrives.
   elApercuVideo.src = "/video?ts=" + Date.now();
-  derniereSourceApercu = source;
+  lastPreviewSource = source;
 }
 
 elApercuVideo.addEventListener("error", () => {
-  apercuIndisponibleAffiche = true;
+  previewUnavailableShown = true;
   elApercuIndisponible.textContent = t("apercu_indisponible");
   elApercuIndisponible.hidden = false;
 });

@@ -39,13 +39,13 @@ TAILLE_CORPS_MAX = 4096
 #: Chunk size for streaming GET /video. Sources reach 326 MB: reading a
 #: whole file into memory per request would not scale, so the body is
 #: always sent in fixed-size pieces, full download and Range alike.
-TAILLE_MORCEAU_VIDEO = 65536
+VIDEO_CHUNK_SIZE = 65536
 
 #: A single-range Range header, as sent by an HTML5 <video> element:
 #: "bytes=A-B", "bytes=A-" (open-ended) or "bytes=-N" (suffix, last N
 #: bytes). Anything else (multiple ranges, no digit at all) does not match
 #: and is treated as absent per RFC 7233 -- see _sert_video.
-_RANGE_UNIQUE = re.compile(r"^bytes=(\d*)-(\d*)$")
+_SINGLE_RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 def nb_frames_estime(info):
@@ -1458,56 +1458,67 @@ def fabrique_handler(porteur, moteur):
             if source is None:
                 return self._envoie(404, b"", "text/plain")
             try:
-                taille = os.path.getsize(source)
+                size = os.path.getsize(source)
             except OSError:
                 # The state names a source that vanished from disk since:
                 # a 404 tells the truth, nothing to stream.
                 return self._envoie(404, b"", "text/plain")
-            type_mime, _ = mimetypes.guess_type(source)
-            type_mime = type_mime or "application/octet-stream"
+            mime_type, _ = mimetypes.guess_type(source)
+            mime_type = mime_type or "application/octet-stream"
 
-            debut, fin, partiel = 0, taille - 1, False
-            plage = self.headers.get("Range")
-            if plage:
-                m = _RANGE_UNIQUE.match(plage)
+            start, end, partial = 0, size - 1, False
+            range_spec = self.headers.get("Range")
+            if range_spec:
+                m = _SINGLE_RANGE.match(range_spec)
                 if m and (m.group(1) or m.group(2)):
-                    brut_debut, brut_fin = m.groups()
-                    if brut_debut == "":
+                    raw_start, raw_end = m.groups()
+                    if raw_start == "":
                         # Suffix form, "bytes=-N": the last N bytes.
-                        debut = max(0, taille - int(brut_fin))
-                        fin = taille - 1
+                        candidate_start = max(0, size - int(raw_end))
+                        candidate_end = size - 1
                     else:
-                        debut = int(brut_debut)
-                        fin = int(brut_fin) if brut_fin else taille - 1
-                    if debut >= taille:
+                        candidate_start = int(raw_start)
+                        candidate_end = int(raw_end) if raw_end else size - 1
+                    if candidate_start >= size:
                         self.send_response(416)
-                        self.send_header("Content-Range", f"bytes */{taille}")
+                        self.send_header("Content-Range", f"bytes */{size}")
                         self.send_header("Accept-Ranges", "bytes")
                         self.send_header("Content-Length", "0")
                         self.end_headers()
                         return
-                    fin = min(fin, taille - 1)
-                    partiel = True
-                # Anything else (several ranges, no digit at all) does not
-                # match _RANGE_UNIQUE: the header is ignored, per RFC 7233,
-                # and the response falls through to a full 200 body below.
+                    if candidate_end < candidate_start:
+                        # A reversed range ("bytes=100-50") is syntactically
+                        # invalid, not merely unsatisfiable: RFC 7233 says to
+                        # ignore it -- same as a header _SINGLE_RANGE does not
+                        # even match -- and fall through to a full 200 body
+                        # below. start/end/partial keep their full-body
+                        # defaults.
+                        pass
+                    else:
+                        start = candidate_start
+                        end = min(candidate_end, size - 1)
+                        partial = True
+                # Anything else (several ranges, no digit at all, or a
+                # reversed range) does not produce a usable range: the
+                # header is ignored, per RFC 7233, and the response falls
+                # through to a full 200 body below.
 
-            self.send_response(206 if partiel else 200)
-            self.send_header("Content-Type", type_mime)
+            self.send_response(206 if partial else 200)
+            self.send_header("Content-Type", mime_type)
             self.send_header("Accept-Ranges", "bytes")
-            if partiel:
-                self.send_header("Content-Range", f"bytes {debut}-{fin}/{taille}")
-            self.send_header("Content-Length", str(fin - debut + 1))
+            if partial:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Content-Length", str(end - start + 1))
             self.end_headers()
             with open(source, "rb") as f:
-                f.seek(debut)
-                restant = fin - debut + 1
-                while restant > 0:
-                    morceau = f.read(min(TAILLE_MORCEAU_VIDEO, restant))
-                    if not morceau:
+                f.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = f.read(min(VIDEO_CHUNK_SIZE, remaining))
+                    if not chunk:
                         break                    # source truncated mid-read
-                    self.wfile.write(morceau)
-                    restant -= len(morceau)
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
 
         def _lit_corps_json(self):
             """L'objet JSON du corps, ou None s'il est inexploitable.

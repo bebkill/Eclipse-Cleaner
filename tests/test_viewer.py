@@ -3340,7 +3340,7 @@ def test_the_page_and_state_agree_on_the_preset(serveur):
 # support exists for the <video> element's native seek bar.
 
 def _get_range(url, plage):
-    """Like _get, but with a Range header. Rend (code, corps, entetes).
+    """Like _get, but with a Range header. Returns (status, body, headers).
 
     A 206/416 is a normal response to assert on, not a panic: HTTPError
     itself carries a status and headers, exactly like a plain response would
@@ -3354,7 +3354,7 @@ def _get_range(url, plage):
         return e.code, e.read(), e.headers
 
 
-def test_video_sans_source_rend_404():
+def test_video_without_source_returns_404():
     porteur = Porteur(None, None, None, None)
     with _serveur_pour(porteur) as url:
         with pytest.raises(urllib.error.HTTPError) as e:
@@ -3363,7 +3363,7 @@ def test_video_sans_source_rend_404():
         assert e.value.read() == b""
 
 
-def test_video_sert_la_source_entiere(serveur):
+def test_video_serves_the_whole_source(serveur):
     base, _, src = serveur
     with urllib.request.urlopen(base + "/video") as r:
         statut = r.status
@@ -3378,7 +3378,7 @@ def test_video_sert_la_source_entiere(serveur):
     assert len(corps) == os.path.getsize(src)
 
 
-def test_video_range_rend_un_extrait(serveur):
+def test_video_range_returns_a_slice(serveur):
     base, _, src = serveur
     taille = os.path.getsize(src)
     statut, corps, entetes = _get_range(base + "/video", "bytes=0-99")
@@ -3389,7 +3389,7 @@ def test_video_range_rend_un_extrait(serveur):
     assert entetes.get("Content-Range") == f"bytes 0-99/{taille}"
 
 
-def test_video_range_hors_bornes_rend_416(serveur):
+def test_video_range_out_of_bounds_returns_416(serveur):
     base, _, src = serveur
     taille = os.path.getsize(src)
     statut, corps, entetes = _get_range(base + "/video", f"bytes={taille}-")
@@ -3398,7 +3398,7 @@ def test_video_range_hors_bornes_rend_416(serveur):
     assert entetes.get("Content-Range") == f"bytes */{taille}"
 
 
-def test_video_range_suffixe_rend_les_derniers_octets(serveur):
+def test_video_suffix_range_returns_the_last_bytes(serveur):
     base, _, src = serveur
     with open(src, "rb") as f:
         contenu = f.read()
@@ -3406,3 +3406,17 @@ def test_video_range_suffixe_rend_les_derniers_octets(serveur):
     assert statut == 206
     assert len(corps) == 50
     assert corps == contenu[-50:]
+
+
+def test_video_reversed_range_falls_back_to_the_full_body(serveur):
+    """"bytes=100-50" is syntactically invalid (end before start), not
+    merely unsatisfiable: RFC 7233 says to ignore it, exactly like a header
+    that does not match the single-range grammar at all, and fall through
+    to a full 200 body -- never a 206 with a negative Content-Length."""
+    base, _, src = serveur
+    with open(src, "rb") as f:
+        contenu = f.read()
+    statut, corps, entetes = _get_range(base + "/video", "bytes=100-50")
+    assert statut == 200
+    assert corps == contenu
+    assert "Content-Range" not in entetes
