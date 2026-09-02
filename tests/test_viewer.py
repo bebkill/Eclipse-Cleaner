@@ -14,7 +14,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from eclipse import langues, viewer
-from eclipse.decisions import charger, enregistrer
+from eclipse.decisions import SUFFIXE_PRECEDENT, charger, enregistrer
 from eclipse.io import FrameWriter, probe
 from eclipse.pipeline import _signature_source, analyze, main
 from eclipse.taches import Moteur
@@ -2314,20 +2314,39 @@ def test_render_and_png_outputs_live_in_the_work_folder(tmp_path):
             == str(dossier / "eclipse-clean.json"))
 
 
+def _ancien_descripteur(src, rendu):
+    """Ecrit a cote de `rendu` un descripteur qui NOMME `src`.
+
+    Un vrai descripteur, ecrit par le module qui les ecrit : c'est lui que
+    la migration interroge pour savoir de quelle video ce rendu est issu
+    (voir viewer._rendu_de_cette_source), et un JSON bricole a la main
+    passerait a cote du schema comme de la forme du champ.
+    """
+    from eclipse.descripteur import ecrit
+
+    ecrit(rendu, {}, {"source": _signature_source(src), "scale": 1.0,
+                      "radius": 25.0, "width": 120, "height": 200}, {})
+
+
 def _ancienne_disposition(src):
-    """Ecrit les six derives de l'ANCIENNE disposition, a cote de la source.
+    """Ecrit les sept derives de l'ANCIENNE disposition, a cote de la source.
 
     Contenus reconnaissables : ce que la migration doit retrouver intact de
-    l'autre cote, et non seulement un fichier du bon nom.
+    l'autre cote, et non seulement un fichier du bon nom. Le descripteur du
+    rendu fait exception -- il doit etre VRAI, sans quoi le rendu n'est pas
+    migre du tout (sa provenance n'est plus attestee).
     """
     sans_ext = os.path.splitext(src)[0]
+    ancien_rendu = sans_ext + "-clean.mp4"
     fichiers = {src + "-analysis.json": b'{"vieux":"cache"}',
                 src + "-decisions.json": b'{"vieux":"tri"}',
-                sans_ext + "-clean.mp4": b"le rendu precedent",
-                sans_ext + "-clean.json": b'{"vieux":"descripteur"}'}
+                src + "-decisions.json" + SUFFIXE_PRECEDENT:
+                    b'{"vieux":"tri, generation precedente"}',
+                ancien_rendu: b"le rendu precedent"}
     for chemin, contenu in fichiers.items():
         with open(chemin, "wb") as f:
             f.write(contenu)
+    _ancien_descripteur(src, ancien_rendu)
     dossiers = {}
     for dossier, nom, contenu in (
             (src + "-vignettes", "frame-00001.jpg", b"vignette"),
@@ -2346,22 +2365,30 @@ def test_taking_a_source_migrates_the_old_layout(tmp_path, capsys):
     sinon l'operateur garde deux exemplaires d'un tri manuel et ne sait plus
     lequel le viewer lit.
     """
+    from eclipse.descripteur import chemin_descripteur
+
     src = _cree_video(tmp_path)
     fichiers, dossiers = _ancienne_disposition(src)
+    ancien_descripteur = chemin_descripteur(os.path.splitext(src)[0]
+                                            + "-clean.mp4")
     d = chemins_derives(src)
 
     porteur = Porteur(None, None, None, None)
     porteur.change_source(src)
 
-    dossier = work_folder(src)
     attendus = {d["cache_path"]: b'{"vieux":"cache"}',
                 d["decisions_path"]: b'{"vieux":"tri"}',
-                _sortie_rendu(src): b"le rendu precedent",
-                os.path.join(dossier, "src-clean.json"):
-                    b'{"vieux":"descripteur"}'}
+                d["decisions_path"] + SUFFIXE_PRECEDENT:
+                    b'{"vieux":"tri, generation precedente"}',
+                _sortie_rendu(src): b"le rendu precedent"}
     for chemin, contenu in attendus.items():
         with open(chemin, "rb") as f:
             assert f.read() == contenu, chemin
+    # Le descripteur a suivi son rendu : sans lui, le bandeau annoncerait
+    # « a refaire » d'un rendu a jour, et la provenance serait perdue pour
+    # la prochaine migration.
+    assert os.path.isfile(chemin_descripteur(_sortie_rendu(src)))
+    assert not os.path.exists(ancien_descripteur)
     for nouveau, ancien in ((d["dossier_vignettes"], src + "-vignettes"),
                             (_dossier_png(src),
                              os.path.splitext(src)[0] + "-frames")):
@@ -2378,10 +2405,103 @@ def test_taking_a_source_migrates_the_old_layout(tmp_path, capsys):
     lignes = [ligne for ligne in sortie.splitlines()
               if "Fichiers de travail deplaces" in ligne]
     assert len(lignes) == 1, sortie
-    for etiquette in ("analysis.json", "decisions.json", "vignettes/",
+    for etiquette in ("analysis.json", "decisions.json",
+                      "decisions.json" + SUFFIXE_PRECEDENT, "vignettes/",
                       "src-clean.mp4", "src-clean.json", "frames/"):
         assert etiquette in lignes[0], etiquette
-    assert dossier in lignes[0]
+    assert work_folder(src) in lignes[0]
+
+
+def test_the_decisions_backup_stays_when_its_decisions_file_stays(tmp_path,
+                                                                  capsys):
+    """La sauvegarde ne voyage pas sans le fichier dont elle est une
+    generation.
+
+    Le .precedent est une generation de CE fichier de decisions (voir
+    decisions.enregistrer). Deplace seul dans le dossier, il y passerait
+    pour la sauvegarde du tri que le dossier porte -- alors qu'il vient
+    d'ailleurs -- et une restauration a la main y prendrait le mauvais tri.
+    """
+    src = _cree_video(tmp_path)
+    d = chemins_derives(src)
+    # Le tri neuf existe deja : le vieux ne migre pas (le neuf gagne), et sa
+    # sauvegarde ne doit pas migrer non plus.
+    os.makedirs(work_folder(src))
+    with open(d["decisions_path"], "wb") as f:
+        f.write(b'{"neuf":"tri"}')
+    ancien = src + "-decisions.json"
+    with open(ancien, "wb") as f:
+        f.write(b'{"vieux":"tri"}')
+    with open(ancien + SUFFIXE_PRECEDENT, "wb") as f:
+        f.write(b'{"vieux":"tri, generation precedente"}')
+
+    Porteur(None, None, None, None).change_source(src)
+
+    assert os.path.isfile(ancien + SUFFIXE_PRECEDENT)
+    assert not os.path.exists(d["decisions_path"] + SUFFIXE_PRECEDENT)
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+
+
+def test_a_render_whose_descriptor_names_another_source_is_not_migrated(
+        tmp_path, capsys):
+    """L'ancienne collision de radicaux, desarmee par la provenance.
+
+    eclipse.mov et eclipse.mp4 PARTAGEAIENT eclipse-clean.mp4 et
+    eclipse-frames : les migrer sur leur nom emporterait le rendu du .mp4
+    dans le dossier de travail du .mov, ou la page le presenterait comme la
+    sortie du .mov -- et le .mp4 ne le retrouverait plus. Le descripteur
+    enregistre la signature de source du rendu justement pour qu'on puisse
+    demander plutot que deviner.
+    """
+    mp4 = _cree_video(tmp_path, nom="eclipse.mp4")
+    mov = _cree_video(tmp_path, nom="eclipse.mov")
+    # Le rendu du .mp4, sous le nom que les deux extensions partageaient.
+    rendu = str(tmp_path / "eclipse-clean.mp4")
+    with open(rendu, "wb") as f:
+        f.write(b"le rendu du .mp4")
+    _ancien_descripteur(mp4, rendu)
+    frames = str(tmp_path / "eclipse-frames")
+    os.makedirs(frames)
+    with open(os.path.join(frames, "frame-00001.png"), "wb") as f:
+        f.write(b"png du .mp4")
+
+    # On ouvre le .mov : ce rendu-la n'est pas le sien.
+    Porteur(None, None, None, None).change_source(mov)
+
+    assert os.path.isfile(rendu)
+    assert os.path.isdir(frames)
+    assert not os.path.exists(_sortie_rendu(mov))
+    assert not os.path.exists(_dossier_png(mov))
+    # Silencieusement : rien n'est perdu, et l'operateur n'a pas a etre
+    # averti d'un fichier qui ne le concerne pas.
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+
+    # Et le proprietaire, lui, le recupere : c'est la moitie qui rend le
+    # refus ci-dessus honnete plutot que simplement prudent.
+    Porteur(None, None, None, None).change_source(mp4)
+    with open(_sortie_rendu(mp4), "rb") as f:
+        assert f.read() == b"le rendu du .mp4"
+    assert os.path.isfile(os.path.join(_dossier_png(mp4), "frame-00001.png"))
+
+
+def test_a_render_without_a_descriptor_is_not_migrated(tmp_path, capsys):
+    """Provenance inconnue vaut « ne pas y toucher ».
+
+    Un rendu produit par la commande `render` n'a pas de descripteur : son
+    nom ne dit pas de quelle video il vient, et le deplacer serait un pari.
+    Il reste exactement ou son operateur l'a mis -- rien n'est perdu, la
+    migration ne fait que DEPLACER.
+    """
+    src = _cree_video(tmp_path)
+    rendu = os.path.splitext(src)[0] + "-clean.mp4"
+    with open(rendu, "wb") as f:
+        f.write(b"venu d'ailleurs")
+
+    Porteur(None, None, None, None).change_source(src)
+
+    assert os.path.isfile(rendu)
+    assert not os.path.exists(_sortie_rendu(src))
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
 
 
 def test_migration_leaves_the_old_file_when_the_new_one_exists(tmp_path,

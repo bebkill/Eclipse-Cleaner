@@ -331,37 +331,98 @@ def chemins_derives(source):
             "dossier_vignettes": os.path.join(dossier, "vignettes")}
 
 
-def _anciens_chemins(source):
-    """(old path, new path, label) for every derived file of the OLD layout.
+def _rendu_de_cette_source(source, ancien_rendu):
+    """True when that old-layout render was produced FROM this source.
 
-    The layout before the work folder: every derived file was a sibling of
-    the source, named after it. Read by _migre_disposition, which is the
-    only reason these names still exist in the code.
+    THE GATE THE OLD NAMING NEEDS, and the reason the render is not migrated
+    on its name alone. The old names stripped the extension: eclipse.mov and
+    eclipse.mp4 SHARED "eclipse-clean.mp4" and "eclipse-frames" -- the very
+    collision chemins_derives refused for the cache and the review. Moving
+    one on sight would carry a SIBLING VIDEO's render into this video's work
+    folder, where the page would then present it as this eclipse's output,
+    and the sibling would find its render gone.
+
+    So provenance is asked, not guessed: the descriptor written beside every
+    render from the page records the source signature of the analysis it
+    applied (see _signature_analyse and descripteur.recorded_source).
+
+    False on no descriptor, an unreadable one, or one naming another video.
+    A render produced by the `render` command has no descriptor at all and
+    therefore never migrates -- deliberately: it stays exactly where its
+    operator put it, and nothing is lost either way, since this function
+    only ever decides whether to MOVE.
+    """
+    from .descripteur import recorded_source
+    from .pipeline import _signature_source
+
+    enregistree = recorded_source(ancien_rendu)
+    if enregistree is None:
+        return False
+    try:
+        return enregistree == _signature_source(source)
+    except OSError:
+        # The source cannot be stat'ed -- a mistyped path, migration running
+        # before construit_etat validates it (see Porteur._pose). Unknown
+        # provenance, hence no claim.
+        return False
+
+
+def _anciens_groupes(source):
+    """The old-layout items this source may claim, in provenance GROUPS.
+
+    Each group is a list of (old path, new path, label), and its FIRST item
+    decides for those that follow: a follower means nothing on its own, so
+    when the head does not move the followers stay where they are. Two
+    groups have followers -- the decisions file carries its backup
+    generation (decisions.SUFFIXE_PRECEDENT, one generation of THAT file),
+    and the render carries its descriptor and its PNG export, which share
+    its provenance exactly.
 
     The labels are what the migration line prints, so they are the NEW
     basenames -- what the operator will actually find in the folder.
+
+    THIS READS THE DISK, unlike work_folder and chemins_derives: the render
+    group is absent altogether when its descriptor does not vouch for this
+    source (see _rendu_de_cette_source). Names alone cannot answer that
+    question, which is exactly why the group is filtered here rather than
+    inside the mover.
     """
+    from .decisions import SUFFIXE_PRECEDENT
     from .descripteur import chemin_descripteur
 
     dossier = work_folder(source)
     sans_ext = os.path.splitext(source)[0]
+    ancien_decisions = source + "-decisions.json"
+    nouveau_decisions = os.path.join(dossier, "decisions.json")
     ancien_rendu = sans_ext + "-clean.mp4"
     nouveau_rendu = _sortie_rendu(source)
-    return [
-        (source + "-analysis.json",
-         os.path.join(dossier, "analysis.json"), "analysis.json"),
-        (source + "-decisions.json",
-         os.path.join(dossier, "decisions.json"), "decisions.json"),
-        (source + "-vignettes",
-         os.path.join(dossier, "vignettes"), "vignettes/"),
-        (ancien_rendu, nouveau_rendu, os.path.basename(nouveau_rendu)),
-        # The descriptor follows its render: both sides derive their path
-        # from the video's, so naming the two videos names the two .json.
-        (chemin_descripteur(ancien_rendu),
-         chemin_descripteur(nouveau_rendu),
-         os.path.basename(chemin_descripteur(nouveau_rendu))),
-        (sans_ext + "-frames", _dossier_png(source), "frames/"),
+    groupes = [
+        [(source + "-analysis.json",
+          os.path.join(dossier, "analysis.json"), "analysis.json")],
+        [(ancien_decisions, nouveau_decisions, "decisions.json"),
+         # The backup follows its file WITHOUT any new plumbing: both names
+         # are its own path plus the suffix, so the new name falls out of
+         # the new decisions path. Left behind, it would be an orphaned
+         # generation of a file that is no longer there -- clutter next to
+         # the video, and a trap for whoever reads it as a review.
+         (ancien_decisions + SUFFIXE_PRECEDENT,
+          nouveau_decisions + SUFFIXE_PRECEDENT,
+          "decisions.json" + SUFFIXE_PRECEDENT)],
+        [(source + "-vignettes",
+          os.path.join(dossier, "vignettes"), "vignettes/")],
     ]
+    if _rendu_de_cette_source(source, ancien_rendu):
+        groupes.append([
+            (ancien_rendu, nouveau_rendu, os.path.basename(nouveau_rendu)),
+            # The descriptor follows its render: both sides derive their
+            # path from the video's, so naming the two videos names the two
+            # .json.
+            (chemin_descripteur(ancien_rendu),
+             chemin_descripteur(nouveau_rendu),
+             os.path.basename(chemin_descripteur(nouveau_rendu))),
+            (sans_ext + "-frames", _dossier_png(source), "frames/"),
+        ])
+    return groupes
 
 
 def _migre_disposition(source, honores=()):
@@ -384,6 +445,11 @@ def _migre_disposition(source, honores=()):
     named would be the very silent substitution this function exists to
     avoid.
 
+    Item by item, but in PROVENANCE GROUPS: what only makes sense beside
+    another file does not travel without it (see _anciens_groupes). And a
+    render whose descriptor does not vouch for this source is not offered
+    here at all -- silently, since it plausibly belongs to a sibling video.
+
     os.replace, not a copy: the two paths are siblings in one tree, hence
     the same volume, and a rename moves a directory as well as a file. A
     failure (a file held open by the explorer, an antivirus) is NAMED and
@@ -397,19 +463,28 @@ def _migre_disposition(source, honores=()):
     deplaces = []
     dossier = work_folder(source)
     honores = {os.path.normcase(os.path.abspath(c)) for c in honores if c}
-    for ancien, nouveau, etiquette in _anciens_chemins(source):
+
+    def deplace(ancien, nouveau, etiquette):
+        """Moves this one item. True when it actually moved."""
         if os.path.normcase(os.path.abspath(ancien)) in honores:
-            continue
+            return False
         if os.path.exists(nouveau) or not os.path.exists(ancien):
-            continue
+            return False
         try:
             os.makedirs(dossier, exist_ok=True)
             os.replace(ancien, nouveau)
         except OSError as exc:
             print(f"ATTENTION : {ancien} n'a pas pu etre deplace dans "
                   f"{dossier} ({exc})")
-            continue
+            return False
         deplaces.append(etiquette)
+        return True
+
+    for groupe in _anciens_groupes(source):
+        tete, suite = groupe[0], groupe[1:]
+        if deplace(*tete):
+            for item in suite:
+                deplace(*item)
     if deplaces:
         print(f"Fichiers de travail deplaces dans {dossier} : "
               f"{', '.join(deplaces)}")
