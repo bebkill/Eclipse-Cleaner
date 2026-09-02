@@ -7,7 +7,9 @@ rendu — ce que l'utilisateur voit en rouge est donc exactement ce que le
 rendu ecarte.
 """
 import json
+import mimetypes
 import os
+import re
 import shutil
 import sys
 import threading
@@ -33,6 +35,17 @@ _PAGE = os.path.join(os.path.dirname(__file__), "static", "viewer.html")
 #: quelques Ko laissent une marge large sans laisser un client (ou un script
 #: errant) gonfler la memoire du serveur avec un corps arbitrairement grand.
 TAILLE_CORPS_MAX = 4096
+
+#: Chunk size for streaming GET /video. Sources reach 326 MB: reading a
+#: whole file into memory per request would not scale, so the body is
+#: always sent in fixed-size pieces, full download and Range alike.
+TAILLE_MORCEAU_VIDEO = 65536
+
+#: A single-range Range header, as sent by an HTML5 <video> element:
+#: "bytes=A-B", "bytes=A-" (open-ended) or "bytes=-N" (suffix, last N
+#: bytes). Anything else (multiple ranges, no digit at all) does not match
+#: and is treated as absent per RFC 7233 -- see _sert_video.
+_RANGE_UNIQUE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 def nb_frames_estime(info):
@@ -1411,6 +1424,8 @@ def fabrique_handler(porteur, moteur):
                 # frames. Le rechargement est le rappel de fin de tache.
                 corps = json.dumps(moteur.etat()).encode("utf-8")
                 return self._envoie(200, corps, "application/json")
+            if self.path == "/video" or self.path.startswith("/video?"):
+                return self._sert_video(etat)
             if self.path.startswith("/thumb/"):
                 nom = self.path[len("/thumb/"):]
                 try:
@@ -1428,6 +1443,71 @@ def fabrique_handler(porteur, moteur):
                 with open(chemin, "rb") as f:
                     return self._envoie(200, f.read(), "image/jpeg")
             return self._envoie(404, b"", "text/plain")
+
+        def _sert_video(self, etat):
+            """Streams the CURRENT source, for the raw-video player.
+
+            Only ever etat["source"] -- never a client-supplied path, there
+            is no query parameter naming a file. Streamed in fixed-size
+            chunks rather than read whole (sources reach 326 MB), and Range
+            support exists so an HTML5 <video> element's native seek bar can
+            jump without downloading everything before it -- browsers issue
+            range requests during ordinary playback too, not only on a seek.
+            """
+            source = etat["source"]
+            if source is None:
+                return self._envoie(404, b"", "text/plain")
+            try:
+                taille = os.path.getsize(source)
+            except OSError:
+                # The state names a source that vanished from disk since:
+                # a 404 tells the truth, nothing to stream.
+                return self._envoie(404, b"", "text/plain")
+            type_mime, _ = mimetypes.guess_type(source)
+            type_mime = type_mime or "application/octet-stream"
+
+            debut, fin, partiel = 0, taille - 1, False
+            plage = self.headers.get("Range")
+            if plage:
+                m = _RANGE_UNIQUE.match(plage)
+                if m and (m.group(1) or m.group(2)):
+                    brut_debut, brut_fin = m.groups()
+                    if brut_debut == "":
+                        # Suffix form, "bytes=-N": the last N bytes.
+                        debut = max(0, taille - int(brut_fin))
+                        fin = taille - 1
+                    else:
+                        debut = int(brut_debut)
+                        fin = int(brut_fin) if brut_fin else taille - 1
+                    if debut >= taille:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{taille}")
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                    fin = min(fin, taille - 1)
+                    partiel = True
+                # Anything else (several ranges, no digit at all) does not
+                # match _RANGE_UNIQUE: the header is ignored, per RFC 7233,
+                # and the response falls through to a full 200 body below.
+
+            self.send_response(206 if partiel else 200)
+            self.send_header("Content-Type", type_mime)
+            self.send_header("Accept-Ranges", "bytes")
+            if partiel:
+                self.send_header("Content-Range", f"bytes {debut}-{fin}/{taille}")
+            self.send_header("Content-Length", str(fin - debut + 1))
+            self.end_headers()
+            with open(source, "rb") as f:
+                f.seek(debut)
+                restant = fin - debut + 1
+                while restant > 0:
+                    morceau = f.read(min(TAILLE_MORCEAU_VIDEO, restant))
+                    if not morceau:
+                        break                    # source truncated mid-read
+                    self.wfile.write(morceau)
+                    restant -= len(morceau)
 
         def _lit_corps_json(self):
             """L'objet JSON du corps, ou None s'il est inexploitable.

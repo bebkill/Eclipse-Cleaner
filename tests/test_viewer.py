@@ -3334,3 +3334,75 @@ def test_the_page_and_state_agree_on_the_preset(serveur):
     _, corps = _get(url + "/api/frames")
     assert json.loads(corps)["preset"]["effectif"] == "planetary"
     _requete("POST", url + "/api/preset", {"preset": avant})
+
+
+# -- GET /video: streams the current source for the raw-video player. Range
+# support exists for the <video> element's native seek bar.
+
+def _get_range(url, plage):
+    """Like _get, but with a Range header. Rend (code, corps, entetes).
+
+    A 206/416 is a normal response to assert on, not a panic: HTTPError
+    itself carries a status and headers, exactly like a plain response would
+    (same reasoning as _requete for POST).
+    """
+    req = urllib.request.Request(url, headers={"Range": plage})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, r.read(), r.headers
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), e.headers
+
+
+def test_video_sans_source_rend_404():
+    porteur = Porteur(None, None, None, None)
+    with _serveur_pour(porteur) as url:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            _get(f"{url}/video")
+        assert e.value.code == 404
+        assert e.value.read() == b""
+
+
+def test_video_sert_la_source_entiere(serveur):
+    base, _, src = serveur
+    with urllib.request.urlopen(base + "/video") as r:
+        statut = r.status
+        type_mime = r.headers.get("Content-Type")
+        accept_ranges = r.headers.get("Accept-Ranges")
+        corps = r.read()
+    assert statut == 200
+    assert type_mime == "video/mp4"
+    assert accept_ranges == "bytes"
+    with open(src, "rb") as f:
+        assert corps == f.read()
+    assert len(corps) == os.path.getsize(src)
+
+
+def test_video_range_rend_un_extrait(serveur):
+    base, _, src = serveur
+    taille = os.path.getsize(src)
+    statut, corps, entetes = _get_range(base + "/video", "bytes=0-99")
+    assert statut == 206
+    assert len(corps) == 100
+    with open(src, "rb") as f:
+        assert corps == f.read(100)
+    assert entetes.get("Content-Range") == f"bytes 0-99/{taille}"
+
+
+def test_video_range_hors_bornes_rend_416(serveur):
+    base, _, src = serveur
+    taille = os.path.getsize(src)
+    statut, corps, entetes = _get_range(base + "/video", f"bytes={taille}-")
+    assert statut == 416
+    assert corps == b""
+    assert entetes.get("Content-Range") == f"bytes */{taille}"
+
+
+def test_video_range_suffixe_rend_les_derniers_octets(serveur):
+    base, _, src = serveur
+    with open(src, "rb") as f:
+        contenu = f.read()
+    statut, corps, entetes = _get_range(base + "/video", "bytes=-50")
+    assert statut == 206
+    assert len(corps) == 50
+    assert corps == contenu[-50:]

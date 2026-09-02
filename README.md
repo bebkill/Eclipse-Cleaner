@@ -33,7 +33,7 @@ I tried to fix it with the tools available (SIRIL and PIPP), but I probably didn
 - **Moves the frame like a camera operator would** — the crop window is planned, bounded softly against the source edges, and absorbs the tracking re-acquisition jumps (hundreds of pixels in a single frame) instead of jerking.
 - **Removes auto-exposure flicker** — brightness is corrected frame by frame toward the sequence median, and white balance is stabilized toward its *own* trajectory, never toward neutral: a red solar filter stays red, a sunset stays warm, and removing the filter mid-sequence stays a real change. (`--sans-couleur` disables the color part.)
 - **Bridges short gaps** with linear interpolation, and never invents footage for long ones: a real hole stays a clean cut.
-- **A review viewer in your browser** — inspect every frame, overrule the automatic sorting with one keystroke, then re-render. Bilingual (English/French), served on 127.0.0.1 only.
+- **A review viewer in your browser** — inspect every frame, overrule the automatic sorting with one keystroke, then re-render. Bilingual (English/French), served on 127.0.0.1 only. It shows a loading state while a newly picked video is probed, and offers a collapsible raw-video player to watch the source itself.
 
 Everything adapts to your video: resolution, aspect ratio, frame rate and apparent solar radius are measured, not assumed, and every threshold can be overridden from the command line.
 

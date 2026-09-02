@@ -33,7 +33,7 @@ J'ai essayé de corriger avec les outils disponibles (SIRIL et PIPP), mais je n'
 - **Déplace le cadre comme le ferait un cadreur** — la fenêtre de recadrage est planifiée, butée en douceur contre les bords de la source, et absorbe les sauts de ré-acquisition du tracking (des centaines de pixels en une frame) au lieu de saccader.
 - **Supprime le scintillement de l'exposition automatique** — le niveau est corrigé image par image vers la médiane de la séquence, et la balance des blancs est stabilisée vers sa *propre* trajectoire, jamais vers le neutre : un filtre solaire rouge reste rouge, un coucher de soleil reste chaud, et son retrait en cours de séquence reste un vrai changement. (`--sans-couleur` désactive la partie couleur.)
 - **Comble les coupes courtes** par interpolation linéaire, et n'invente jamais d'images pour les longues : un vrai trou reste une coupe franche.
-- **Un viewer de revue dans le navigateur** — inspecter chaque frame, corriger le tri automatique d'une touche, puis relancer le rendu. Bilingue (français/anglais), servi sur 127.0.0.1 uniquement.
+- **Un viewer de revue dans le navigateur** — inspecter chaque frame, corriger le tri automatique d'une touche, puis relancer le rendu. Bilingue (français/anglais), servi sur 127.0.0.1 uniquement. Il affiche un état de chargement pendant la sonde d'une vidéo tout juste choisie, et propose un lecteur repliable pour visionner la source brute.
 
 Tout s'adapte à votre vidéo : résolution, format, cadence et rayon apparent du Soleil sont mesurés, pas supposés, et chaque seuil peut être ajusté en ligne de commande.
 
