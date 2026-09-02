@@ -331,8 +331,8 @@ def chemins_derives(source):
             "dossier_vignettes": os.path.join(dossier, "vignettes")}
 
 
-def _rendu_de_cette_source(source, ancien_rendu):
-    """True when that old-layout render was produced FROM this source.
+def _rendu_de_cette_source(source, *rendus):
+    """True when a descriptor beside one of these renders names this source.
 
     THE GATE THE OLD NAMING NEEDS, and the reason the render is not migrated
     on its name alone. The old names stripped the extension: eclipse.mov and
@@ -346,25 +346,38 @@ def _rendu_de_cette_source(source, ancien_rendu):
     render from the page records the source signature of the analysis it
     applied (see _signature_analyse and descripteur.recorded_source).
 
-    False on no descriptor, an unreadable one, or one naming another video.
-    A render produced by the `render` command has no descriptor at all and
-    therefore never migrates -- deliberately: it stays exactly where its
-    operator put it, and nothing is lost either way, since this function
-    only ever decides whether to MOVE.
+    SEVERAL RENDERS ARE OFFERED, IN ORDER OF AUTHORITY, and the FIRST that
+    has a descriptor answers -- the others are not even read. The caller
+    passes the old-layout render first and the migrated one second: a
+    migration can be interrupted or resumed, so the descriptor may already
+    be in the work folder while the export it vouches for is still outside.
+    Order matters and is not a preference: when a descriptor sits beside the
+    OLD render, it is the one that speaks for the files still at the old
+    location, even if the folder holds another render with another
+    descriptor. Falling through to the folder's descriptor in that case
+    would carry a sibling's export in on someone else's word.
+
+    False on no descriptor anywhere, an unreadable one, or one naming
+    another video. A render produced by the `render` command has no
+    descriptor at all and therefore never migrates -- deliberately: it stays
+    exactly where its operator put it, and nothing is lost either way, since
+    this function only ever decides whether to MOVE.
     """
     from .descripteur import recorded_source
     from .pipeline import _signature_source
 
-    enregistree = recorded_source(ancien_rendu)
-    if enregistree is None:
-        return False
     try:
-        return enregistree == _signature_source(source)
+        courante = _signature_source(source)
     except OSError:
         # The source cannot be stat'ed -- a mistyped path, migration running
         # before construit_etat validates it (see Porteur._pose). Unknown
         # provenance, hence no claim.
         return False
+    for rendu in rendus:
+        enregistree = recorded_source(rendu)
+        if enregistree is not None:
+            return enregistree == courante
+    return False
 
 
 def _anciens_groupes(source):
@@ -372,20 +385,22 @@ def _anciens_groupes(source):
 
     Each group is a list of (old path, new path, label), and its FIRST item
     decides for those that follow: a follower means nothing on its own, so
-    when the head does not move the followers stay where they are. Two
-    groups have followers -- the decisions file carries its backup
-    generation (decisions.SUFFIXE_PRECEDENT, one generation of THAT file),
-    and the render carries its descriptor and its PNG export, which share
-    its provenance exactly.
+    it does not travel while its head is still outside. Two groups have
+    followers -- the decisions file carries its backup generation
+    (decisions.SUFFIXE_PRECEDENT, one generation of THAT file), and the
+    render carries its descriptor and its PNG export, which share its
+    provenance exactly.
 
     The labels are what the migration line prints, so they are the NEW
     basenames -- what the operator will actually find in the folder.
 
     THIS READS THE DISK, unlike work_folder and chemins_derives: the render
-    group is absent altogether when its descriptor does not vouch for this
-    source (see _rendu_de_cette_source). Names alone cannot answer that
-    question, which is exactly why the group is filtered here rather than
-    inside the mover.
+    group is absent altogether when no descriptor -- neither the old one nor
+    the migrated one -- vouches for this source (see _rendu_de_cette_source).
+    Names alone cannot answer that question, which is exactly why the group
+    is filtered here rather than inside the mover. BOTH LOCATIONS are asked
+    because a migration can stop halfway: gating on the old descriptor alone
+    stranded a still-outside export for good once its descriptor had moved.
     """
     from .decisions import SUFFIXE_PRECEDENT
     from .descripteur import chemin_descripteur
@@ -411,7 +426,7 @@ def _anciens_groupes(source):
         [(source + "-vignettes",
           os.path.join(dossier, "vignettes"), "vignettes/")],
     ]
-    if _rendu_de_cette_source(source, ancien_rendu):
+    if _rendu_de_cette_source(source, ancien_rendu, nouveau_rendu):
         groupes.append([
             (ancien_rendu, nouveau_rendu, os.path.basename(nouveau_rendu)),
             # The descriptor follows its render: both sides derive their
@@ -450,6 +465,16 @@ def _migre_disposition(source, honores=()):
     render whose descriptor does not vouch for this source is not offered
     here at all -- silently, since it plausibly belongs to a sibling video.
 
+    A FOLLOWER TRAVELS WHEN ITS HEAD IS IN THE FOLDER, and not only when
+    this very call is what put it there. "The head moved" and "the head is
+    already there" are the same fact for a follower, and telling them apart
+    stranded files FOREVER: one interrupted or contested migration -- the
+    decisions file moved, its backup left behind by a crash, or a render
+    moved while its descriptor was held open -- and the next open saw the
+    head "not moved" (it had nothing left to move) and never offered the
+    followers again. A render can then sit in the folder descriptor-less,
+    which the page reads as « a refaire » on an up-to-date render.
+
     os.replace, not a copy: the two paths are siblings in one tree, hence
     the same volume, and a rename moves a directory as well as a file. A
     failure (a file held open by the explorer, an antivirus) is NAMED and
@@ -480,9 +505,18 @@ def _migre_disposition(source, honores=()):
         deplaces.append(etiquette)
         return True
 
+    def deja_dans_le_dossier(ancien, nouveau, _etiquette):
+        """True when this item has already made the trip, in an earlier run.
+
+        Its old name is gone and the new one is there: no other reading of
+        that pair exists, since nothing but the migration writes the old
+        name. A head in that state green-lights its followers.
+        """
+        return not os.path.exists(ancien) and os.path.exists(nouveau)
+
     for groupe in _anciens_groupes(source):
         tete, suite = groupe[0], groupe[1:]
-        if deplace(*tete):
+        if deplace(*tete) or deja_dans_le_dossier(*tete):
             for item in suite:
                 deplace(*item)
     if deplaces:
@@ -637,8 +671,16 @@ class Porteur:
         from .pipeline import charger_cache
 
         if source is not None:
+            # _decisions_ligne_de_commande IN ADDITION to the paths in
+            # force: after a round trip through the page (A -> B -> A) the
+            # ones in force are DERIVED, and the file the operator named on
+            # the command line would no longer be protected by them. It is
+            # the very file _tri_orpheline exists to keep speaking about;
+            # migrating it would make that warning describe a file that had
+            # silently moved.
             _migre_disposition(source, (cache_path, decisions_path,
-                                        dossier_vignettes))
+                                        dossier_vignettes,
+                                        self._decisions_ligne_de_commande))
         requested = self.preset_choisi or self.preset_cli
         suggested = None
         if (source is not None and requested is None
@@ -659,7 +701,19 @@ class Porteur:
             # dossier de travail peut naitre. Les taches y ecrivent toutes --
             # decisions.enregistrer, analyze, vignettes.genere, le rendu --
             # et seule genere() cree son dossier elle-meme.
-            os.makedirs(work_folder(source), exist_ok=True)
+            try:
+                os.makedirs(work_folder(source), exist_ok=True)
+            except OSError as exc:
+                # A read-only medium (a write-protected card, a share
+                # mounted read-only) must not make OPENING the video fail:
+                # reviewing what is already there stays perfectly possible,
+                # and only the tasks that write need the folder. Raising
+                # here reported a mistyped path instead of a full-blown
+                # refusal to write.
+                print(f"ATTENTION : le dossier de travail "
+                      f"{work_folder(source)} n'a pas pu etre cree "
+                      f"({exc}) : l'analyse, les vignettes et le rendu ne "
+                      f"pourront pas y ecrire.")
         # Une DONNEE, pas un verdict : le fichier de decisions demande en
         # ligne de commande, que _tri_orpheline compare au chemin derive a
         # chaque requete. Le calcul n'est deliberement pas fige ici, voir
@@ -904,10 +958,9 @@ def _tri_orpheline(etat):
     fichier de la LIGNE DE COMMANDE (./decisions.json par defaut). Basculer
     vers B.mp4 puis revenir a A.mp4 depuis la page fait lire
     A.mp4-eclipse/decisions.json, qui n'existe pas. charger() rend {} et, le
-    fichier
-    etant ABSENT, diagnostique() rend None : aucun avertissement n'atteignait
-    la page, rien n'etait imprime, et la revue de A disparaissait de
-    l'interface sans un mot.
+    fichier etant ABSENT, diagnostique() rend None : aucun avertissement
+    n'atteignait la page, rien n'etait imprime, et la revue de A
+    disparaissait de l'interface sans un mot.
 
     RECALCULE A CHAQUE REQUETE, comme _etapes_courantes et pour exactement la
     meme raison : POST /api/decision n'appelle pas porteur.recharge() -- il ne

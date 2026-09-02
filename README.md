@@ -83,7 +83,7 @@ This opens a local page in your browser. Click **Browse…** to pick your video,
 
 1. **Extract the thumbnails** (for review);
 2. **Analyze the frames** (measurements and automatic verdicts);
-3. **Produce the final video** → written as `<source>-eclipse/<source>-clean.mp4` (optionally with a numbered PNG sequence, in `<source>-eclipse/frames/`).
+3. **Produce the final video** → written into the video's work folder: `eclipse.mp4` gives `eclipse.mp4-eclipse/eclipse-clean.mp4` (optionally with a numbered PNG sequence, in `eclipse.mp4-eclipse/frames/`).
 
 Everything the page derives from a video — the analysis cache, your review decisions, the review thumbnails, the render and the PNG export — lives in one work folder created next to it, `<source>-eclipse/`: a folder holding several eclipses stays readable, and two videos can never share a cache or a review. The rendered `-clean.mp4` keeps a name of its own inside that folder, since it is the file you copy out. Work files left loose next to a video by an earlier version are moved into the folder the first time the viewer opens that video, and it says so on the terminal. A rendered video moves only when the descriptor written beside it names *this* video: the old render name was shared between a source and its transcode, so an unvouched one is left exactly where it is.
 

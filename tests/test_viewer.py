@@ -2504,6 +2504,170 @@ def test_a_render_without_a_descriptor_is_not_migrated(tmp_path, capsys):
     assert "Fichiers de travail deplaces" not in capsys.readouterr().out
 
 
+def test_a_stranded_decisions_backup_migrates_on_the_next_open(tmp_path,
+                                                               capsys):
+    """Une migration interrompue ne doit pas abandonner ses suiveurs.
+
+    Le fichier de decisions est dans le dossier, sa sauvegarde est restee
+    dehors -- un arret brutal entre les deux, ou un .precedent tenu ouvert.
+    La tete n'a plus rien a deplacer : le predicat « la tete a bouge »
+    repondait donc non, et le .precedent n'etait plus JAMAIS propose. Ce que
+    le suiveur demande est que sa tete soit DANS le dossier, pas que ce soit
+    cet appel-ci qui l'y ait mise.
+    """
+    src = _cree_video(tmp_path)
+    d = chemins_derives(src)
+    os.makedirs(work_folder(src))
+    with open(d["decisions_path"], "wb") as f:
+        f.write(b'{"le":"tri, deja migre"}')
+    reste = src + "-decisions.json" + SUFFIXE_PRECEDENT
+    with open(reste, "wb") as f:
+        f.write(b'{"la":"sauvegarde restee dehors"}')
+
+    Porteur(None, None, None, None).change_source(src)
+
+    with open(d["decisions_path"] + SUFFIXE_PRECEDENT, "rb") as f:
+        assert f.read() == b'{"la":"sauvegarde restee dehors"}'
+    assert not os.path.exists(reste)
+    assert ("decisions.json" + SUFFIXE_PRECEDENT
+            in capsys.readouterr().out)
+
+
+def test_a_stranded_descriptor_and_export_follow_a_migrated_render(tmp_path):
+    """Meme defaut cote rendu, et sa consequence visible.
+
+    Le rendu est dans le dossier, son descripteur et son export PNG sont
+    restes dehors. Sans reprise, le rendu y reste SANS descripteur pour
+    toujours -- et un rendu sans descripteur se lit « a refaire » (voir
+    descripteur.perime), donc la page reclame douze minutes d'encodage pour
+    un rendu qui est a jour.
+    """
+    from eclipse.descripteur import chemin_descripteur
+
+    src = _cree_video(tmp_path)
+    os.makedirs(work_folder(src))
+    with open(_sortie_rendu(src), "wb") as f:
+        f.write(b"le rendu, deja migre")
+    ancien_rendu = os.path.splitext(src)[0] + "-clean.mp4"
+    _ancien_descripteur(src, ancien_rendu)
+    ancien_frames = os.path.splitext(src)[0] + "-frames"
+    os.makedirs(ancien_frames)
+    with open(os.path.join(ancien_frames, "frame-00001.png"), "wb") as f:
+        f.write(b"png")
+
+    Porteur(None, None, None, None).change_source(src)
+
+    assert os.path.isfile(chemin_descripteur(_sortie_rendu(src)))
+    assert not os.path.exists(chemin_descripteur(ancien_rendu))
+    assert os.path.isfile(os.path.join(_dossier_png(src), "frame-00001.png"))
+    assert not os.path.exists(ancien_frames)
+
+
+def test_a_stranded_export_follows_an_already_migrated_descriptor(tmp_path):
+    """L'autre moitie : c'est le DESCRIPTEUR qui a deja fait le voyage.
+
+    La provenance est alors attestee depuis le dossier, et non plus depuis
+    l'ancien emplacement : la porte doit interroger les deux, sinon l'export
+    reste dehors pour de bon.
+    """
+    src = _cree_video(tmp_path)
+    os.makedirs(work_folder(src))
+    with open(_sortie_rendu(src), "wb") as f:
+        f.write(b"le rendu, deja migre")
+    _ancien_descripteur(src, _sortie_rendu(src))
+    ancien_frames = os.path.splitext(src)[0] + "-frames"
+    os.makedirs(ancien_frames)
+    with open(os.path.join(ancien_frames, "frame-00001.png"), "wb") as f:
+        f.write(b"png")
+
+    Porteur(None, None, None, None).change_source(src)
+
+    assert os.path.isfile(os.path.join(_dossier_png(src), "frame-00001.png"))
+    assert not os.path.exists(ancien_frames)
+
+
+def test_a_stranded_export_stays_without_any_descriptor(tmp_path, capsys):
+    """Sans descripteur nulle part, l'export reste : son nom est ambigu.
+
+    eclipse-frames a pu etre produit par eclipse.mov comme par eclipse.mp4
+    (l'ancien nom retirait l'extension). La reprise des suiveurs ne doit pas
+    devenir une porte de sortie pour la provenance : sans descripteur, on ne
+    touche a rien.
+    """
+    src = _cree_video(tmp_path)
+    os.makedirs(work_folder(src))
+    with open(_sortie_rendu(src), "wb") as f:
+        f.write(b"un rendu venu d'ailleurs")
+    ancien_frames = os.path.splitext(src)[0] + "-frames"
+    os.makedirs(ancien_frames)
+    with open(os.path.join(ancien_frames, "frame-00001.png"), "wb") as f:
+        f.write(b"png")
+
+    Porteur(None, None, None, None).change_source(src)
+
+    assert os.path.isfile(os.path.join(ancien_frames, "frame-00001.png"))
+    assert not os.path.exists(_dossier_png(src))
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+
+
+def test_an_explicit_cli_decisions_file_survives_a_source_round_trip(
+        tmp_path, capsys):
+    """La garantie de la ligne de commande ne doit pas expirer au retour.
+
+    « viewer A.mp4 --decisions A.mp4-decisions.json » : le chemin porte
+    justement un nom de l'ancienne disposition. Aller a B puis revenir a A
+    depuis la page remplace les chemins en force par des chemins DERIVES ;
+    ne proteger que ceux-la faisait migrer, au retour, le fichier meme que
+    l'operateur avait nomme -- et _tri_orpheline se serait tue en decrivant
+    un fichier deplace sous ses pieds.
+    """
+    a = _cree_video(tmp_path, nom="A.mp4")
+    b = _cree_video(tmp_path, nom="B.mp4")
+    decisions_cli = a + "-decisions.json"
+    porteur = Porteur(a, str(tmp_path / "cache-cli.json"), decisions_cli,
+                      str(tmp_path / "vignettes-cli"))
+    enregistrer(decisions_cli, porteur.etat["signature"], {3: "ecarter"})
+
+    porteur.change_source(b)
+    porteur.change_source(a)
+
+    assert os.path.isfile(decisions_cli)
+    assert not os.path.exists(chemins_derives(a)["decisions_path"])
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+    # Et l'avertissement parle encore, du fichier qui est reste ou il est.
+    avertissement = _tri_orpheline(porteur.etat)
+    assert avertissement is not None
+    assert avertissement["fichier_cli"] == decisions_cli
+
+
+def test_a_read_only_medium_does_not_prevent_opening_the_video(
+        tmp_path, capsys, monkeypatch):
+    """Une carte protegee en ecriture ne doit pas empecher de REVOIR.
+
+    Le dossier de travail ne sert qu'aux taches qui ecrivent ; ne pas
+    pouvoir le creer n'empeche pas de relire un etat deja la. Sans cette
+    tolerance, l'ouverture echouait, et sur un message qui parlait du chemin
+    de la video plutot que du refus d'ecrire.
+    """
+    src = _cree_video(tmp_path)
+    reel = os.makedirs
+
+    def makedirs_refuse(chemin, *a, **k):
+        if os.path.normcase(chemin) == os.path.normcase(work_folder(src)):
+            raise OSError(30, "Read-only file system")
+        return reel(chemin, *a, **k)
+
+    monkeypatch.setattr(os, "makedirs", makedirs_refuse)
+    porteur = Porteur(None, None, None, None)
+    porteur.change_source(src)
+
+    assert porteur.etat["source"] == src
+    sortie = capsys.readouterr().out
+    assert "ATTENTION" in sortie
+    assert work_folder(src) in sortie
+    assert "ne pourront pas y ecrire" in sortie
+
+
 def test_migration_leaves_the_old_file_when_the_new_one_exists(tmp_path,
                                                                capsys):
     """Le neuf gagne, et l'ancien n'est pas ecrase pour autant.
@@ -2582,10 +2746,9 @@ def test_revenir_a_la_source_de_la_ligne_de_commande_avertit(tmp_path, capsys):
     « viewer A.mp4 » ecrit les revues dans le fichier de la LIGNE DE
     COMMANDE. Basculer vers B.mp4 puis revenir a A.mp4 depuis la page fait
     lire A.mp4-eclipse/decisions.json, qui n'existe pas : charger() rend {}
-    et, le
-    fichier etant ABSENT, diagnostique() rend None. Aucun avertissement
-    n'atteignait la page, rien n'etait imprime, et la revue de A
-    disparaissait de l'interface sans un mot.
+    et, le fichier etant ABSENT, diagnostique() rend None. Aucun
+    avertissement n'atteignait la page, rien n'etait imprime, et la revue de
+    A disparaissait de l'interface sans un mot.
 
     Le test verifie deux canaux -- le terminal et le CORPS de /api/frames --
     et surtout le NEGATIF : basculer vers B ne doit rien dire, le tri de A

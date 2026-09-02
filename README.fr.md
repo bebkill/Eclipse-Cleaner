@@ -83,7 +83,7 @@ Une page locale s'ouvre dans le navigateur. Cliquez sur **Parcourir…** pour ch
 
 1. **Extraire les images** (les vignettes de revue) ;
 2. **Analyser les images** (mesures et verdicts automatiques) ;
-3. **Produire la vidéo finale** → écrite sous `<source>-eclipse/<source>-clean.mp4` (avec en option une séquence PNG numérotée, dans `<source>-eclipse/frames/`).
+3. **Produire la vidéo finale** → écrite dans le dossier de travail de la vidéo : `eclipse.mp4` donne `eclipse.mp4-eclipse/eclipse-clean.mp4` (avec en option une séquence PNG numérotée, dans `eclipse.mp4-eclipse/frames/`).
 
 Tout ce que la page dérive d'une vidéo — le cache d'analyse, vos décisions de tri, les vignettes de revue, le rendu et l'export PNG — vit dans un unique dossier de travail créé à côté d'elle, `<source>-eclipse/` : un dossier qui contient plusieurs éclipses reste lisible, et deux vidéos ne peuvent jamais partager un cache ni un tri. Le rendu `-clean.mp4` garde un nom propre à l'intérieur de ce dossier, puisque c'est le fichier qu'on en ressort. Les fichiers de travail laissés en vrac à côté d'une vidéo par une version antérieure sont déplacés dans le dossier la première fois que le viewer ouvre cette vidéo, et il le dit au terminal. Une vidéo rendue ne se déplace que si le descripteur écrit à côté d'elle nomme bien *cette* vidéo : l'ancien nom de rendu était partagé entre une source et son transcodage, donc un rendu sans provenance attestée reste exactement là où il est.
 
