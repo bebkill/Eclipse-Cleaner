@@ -19,9 +19,11 @@ from eclipse.io import FrameWriter, probe
 from eclipse.pipeline import _signature_source, analyze, main
 from eclipse.taches import Moteur
 from eclipse.verdicts import analyse_verdicts
-from eclipse.viewer import (TAILLE_CORPS_MAX, Porteur, _reglages_reanalyse,
-                            _tri_orpheline, chemins_derives, construit_etat,
-                            fabrique_handler, nb_frames_estime, sert)
+from eclipse.viewer import (TAILLE_CORPS_MAX, Porteur, _dossier_png,
+                            _reglages_reanalyse, _sortie_partielle,
+                            _sortie_rendu, _tri_orpheline, chemins_derives,
+                            construit_etat, fabrique_handler,
+                            nb_frames_estime, sert, work_folder)
 from eclipse.vignettes import _marqueur, chemin_vignette, compte, genere
 from tests.synth import make_frame
 
@@ -692,7 +694,7 @@ def test_annulation_sans_tache_le_dit_plutot_que_de_mentir(
 def test_rendu_refuse_d_ecraser_une_sortie_existante(serveur_avec_moteur,
                                                      tmp_path):
     url, _, src = serveur_avec_moteur
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    sortie = _sortie_rendu(src)
     with open(sortie, "wb") as f:
         f.write(b"deja la")
     code, _ = _post(f"{url}/api/tache", {"genre": "rendu"})
@@ -707,12 +709,12 @@ def test_rendu_avec_png_exporte_la_sequence(serveur_avec_moteur):
     assert code == 202
     assert moteur.attend(delai=60.0)
     assert moteur.etat()["etat"] == "terminee"
-    dossier = os.path.splitext(src)[0] + "-frames"
+    dossier = _dossier_png(src)
     assert len([n for n in os.listdir(dossier) if n.endswith(".png")]) > 0
     # Le chemin heureux de la permutation : le rendu est LIVRE sous son nom
     # definitif, pas laisse sous le nom partiel ou il a ete ecrit. Sans cette
     # ligne, supprimer la mise en place laisserait toute la suite verte.
-    assert os.path.isfile(os.path.splitext(src)[0] + "-clean.mp4")
+    assert os.path.isfile(_sortie_rendu(src))
 
 
 def test_reanalyse_reprend_l_echelle_et_le_rayon_du_cache(tmp_path):
@@ -879,7 +881,7 @@ def test_le_rendu_rapporte_ses_comptes_a_la_page(serveur_avec_moteur):
 
 def test_rendu_refuse_un_dossier_png_non_vide(serveur_avec_moteur):
     url, _, src = serveur_avec_moteur
-    dossier = os.path.splitext(src)[0] + "-frames"
+    dossier = _dossier_png(src)
     os.makedirs(dossier, exist_ok=True)
     with open(os.path.join(dossier, "deja.png"), "wb") as f:
         f.write(b"x")
@@ -916,7 +918,7 @@ def test_rendu_annule_ne_laisse_pas_de_fichier_de_sortie(
         serveur_avec_moteur, monkeypatch):
     """Un mp4 tronque laisse en place serait pris pour un rendu valide."""
     url, moteur, src = serveur_avec_moteur
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    sortie = _sortie_rendu(src)
     _ralentit_progression(moteur, monkeypatch)
     code, _ = _post(f"{url}/api/tache", {"genre": "rendu"})
     assert code == 202
@@ -1161,7 +1163,7 @@ def test_rendu_qui_echoue_avant_d_ecrire_ne_detruit_pas_le_precedent(
     precedent, complet, sans le moindre avertissement.
     """
     url, moteur, src = serveur_avec_moteur
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    sortie = _sortie_rendu(src)
     with open(sortie, "wb") as f:
         f.write(b"le rendu precedent, complet")
     enregistrer(str(tmp_path / "d.json"), _signature_source(src),
@@ -1195,7 +1197,7 @@ def test_reexport_png_plus_court_ne_laisse_pas_de_png_du_precedent(
     39, sont contigues, donc la encore aucune interpolee.
     """
     url, moteur, src = serveur_avec_moteur
-    dossier = os.path.splitext(src)[0] + "-frames"
+    dossier = _dossier_png(src)
 
     def png():
         return sorted(n for n in os.listdir(dossier) if n.endswith(".png"))
@@ -1238,8 +1240,7 @@ def test_rendu_annule_avec_ecraser_laisse_le_precedent_intact(
     construction.
     """
     url, moteur, src = serveur_avec_moteur
-    dossier = os.path.dirname(src)
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    sortie = _sortie_rendu(src)
     contenu = b"le rendu precedent, complet"
     with open(sortie, "wb") as f:
         f.write(contenu)
@@ -1260,9 +1261,12 @@ def test_rendu_annule_avec_ecraser_laisse_le_precedent_intact(
 
     with open(sortie, "rb") as f:
         assert f.read() == contenu
-    # Et aucune carcasse laissee a cote, quel que soit son nom.
-    assert sorted(n for n in os.listdir(dossier) if n.endswith(".mp4")) == [
-        "src-clean.mp4", "src.mp4"]
+    # Et aucune carcasse laissee a cote, quel que soit son nom : ni dans le
+    # dossier de travail, ou le rendu partiel s'ecrit, ni a cote de la source.
+    assert sorted(n for n in os.listdir(work_folder(src))
+                  if n.endswith(".mp4")) == ["src-clean.mp4"]
+    assert sorted(n for n in os.listdir(os.path.dirname(src))
+                  if n.endswith(".mp4")) == ["src.mp4"]
 
 
 def test_rendu_refuse_pour_occupation_ne_touche_pas_l_export_png(
@@ -1274,7 +1278,7 @@ def test_rendu_refuse_pour_occupation_ne_touche_pas_l_export_png(
     ait pu refuser la tache pour occupation.
     """
     url, moteur, src = serveur_avec_moteur
-    dossier = os.path.splitext(src)[0] + "-frames"
+    dossier = _dossier_png(src)
     os.makedirs(dossier)
     temoin = os.path.join(dossier, "frame-00001.png")
     with open(temoin, "wb") as f:
@@ -1302,7 +1306,7 @@ def test_reexport_png_annule_laisse_l_export_precedent_intact(
     permute a la fin.
     """
     url, moteur, src = serveur_avec_moteur
-    dossier = os.path.splitext(src)[0] + "-frames"
+    dossier = _dossier_png(src)
     os.makedirs(dossier)
     temoin = os.path.join(dossier, "frame-00001.png")
     with open(temoin, "wb") as f:
@@ -1348,8 +1352,8 @@ def test_remplacement_impossible_ne_detruit_pas_le_rendu_termine(
     toucher au rendu precedent non plus.
     """
     url, moteur, src = serveur_avec_moteur
-    dossier = os.path.dirname(src)
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    dossier = work_folder(src)
+    sortie = _sortie_rendu(src)
     with open(sortie, "wb") as f:
         f.write(b"le rendu precedent, complet")
     os.chmod(sortie, stat.S_IREAD)
@@ -1362,7 +1366,7 @@ def test_remplacement_impossible_ne_detruit_pas_le_rendu_termine(
 
         # Le rendu termine est toujours la, sous le nom ou il a ete ecrit.
         restes = [n for n in os.listdir(dossier) if n.endswith(".mp4")
-                  and n not in ("src.mp4", "src-clean.mp4")]
+                  and n != "src-clean.mp4"]
         assert len(restes) == 1
         assert os.path.getsize(os.path.join(dossier, restes[0])) > 0
         # Et le precedent n'a pas ete touche.
@@ -1425,7 +1429,7 @@ def test_permutation_png_interrompue_est_recuperee_et_non_perdue(
     des deux copies alors que la plus recente etait deja perdue.
     """
     url, moteur, src = serveur_avec_moteur
-    frames = os.path.splitext(src)[0] + "-frames"
+    frames = _dossier_png(src)
     ancien = frames + "-ancien"
     os.makedirs(ancien)
     contenu = b"l'export complet, laisse a mi-permutation"
@@ -1521,7 +1525,7 @@ def test_le_cadrage_du_viewer_atteint_render(tmp_path, monkeypatch):
     # donc toujours a cote de la source.
     travail, _, _ = _prepare(porteur, Moteur(), "rendu", True, png=True)
     travail()
-    attendu = os.path.splitext(src)[0] + "-frames"
+    attendu = _dossier_png(src)
     assert recu["frames_dir"] == attendu + "-partiel"
     assert os.path.isfile(os.path.join(attendu, "frame-00001.png"))
 
@@ -1571,7 +1575,10 @@ def test_rendu_partiel_vide_n_est_pas_livre(tmp_path, monkeypatch):
     analyze(src, cache, scale=1.0)
     dossier = str(tmp_path / "v")
     genere(src, dossier, _signature_source(src))
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    # Le dossier de travail est cree par le porteur, qui n'existe pas encore
+    # ici : le rendu precedent que ce test met en place vit dedans.
+    os.makedirs(work_folder(src), exist_ok=True)
+    sortie = _sortie_rendu(src)
     contenu = b"le rendu precedent, complet"
     with open(sortie, "wb") as f:
         f.write(contenu)
@@ -1615,9 +1622,11 @@ def test_echec_de_permutation_nomme_les_artefacts_de_recuperation(
     analyze(src, cache, scale=1.0)
     dossier = str(tmp_path / "v")
     genere(src, dossier, _signature_source(src))
-    partiel = os.path.splitext(src)[0] + "-clean-partiel.mp4"
-    frames_partiel = os.path.splitext(src)[0] + "-frames-partiel"
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    partiel = _sortie_partielle(_sortie_rendu(src))
+    frames_partiel = _dossier_png(src) + "-partiel"
+    sortie = _sortie_rendu(src)
+    # Meme raison qu'au-dessus : pas encore de porteur, donc pas de dossier.
+    os.makedirs(work_folder(src), exist_ok=True)
     with open(sortie, "wb") as f:
         f.write(b"le rendu precedent, complet")
     os.chmod(sortie, stat.S_IREAD)
@@ -1681,7 +1690,7 @@ def test_viewer_refuse_frames_dir(tmp_path, capsys):
     # sous les yeux de l'utilisateur — d'ou la derniere assertion.
     err = capsys.readouterr().err
     assert "--frames-dir" in err
-    assert "<source>-frames" in err
+    assert "<source>-eclipse/frames" in err
     assert "render" in err
     assert "detruirait" not in err
 
@@ -1745,7 +1754,7 @@ def test_le_rendu_ecrit_son_descripteur(serveur_avec_moteur):
     assert code == 202
     assert moteur.attend(delai=90.0)
     assert moteur.etat()["etat"] == "terminee"
-    sortie = os.path.splitext(src)[0] + "-clean.mp4"
+    sortie = _sortie_rendu(src)
     assert os.path.isfile(chemin_descripteur(sortie))
 
 
@@ -1776,7 +1785,7 @@ def test_un_rendu_sans_descripteur_est_a_refaire(serveur_avec_moteur):
     """Un rendu produit en ligne de commande n'en a pas : provenance
     inconnue vaut « a refaire », pas « a jour »."""
     url, _, src = serveur_avec_moteur
-    with open(os.path.splitext(src)[0] + "-clean.mp4", "wb") as f:
+    with open(_sortie_rendu(src), "wb") as f:
         f.write(b"venu d'ailleurs")
     _, corps = _get(f"{url}/api/frames")
     assert json.loads(corps)["etapes"]["rendu"] == "a_refaire"
@@ -2049,7 +2058,7 @@ def test_les_chemins_derives_sont_propres_a_la_source(tmp_path):
     assert a["cache_path"] != b["cache_path"]
     assert a["decisions_path"] != b["decisions_path"]
     assert a["dossier_vignettes"] != b["dossier_vignettes"]
-    assert a["cache_path"].endswith("a.mp4-analysis.json")
+    assert a["cache_path"] == str(tmp_path / "a.mp4-eclipse" / "analysis.json")
 
 
 def test_deux_sources_ne_partagent_pas_leur_tri(tmp_path):
@@ -2074,9 +2083,13 @@ def test_post_source_change_la_source_et_derive_les_chemins(tmp_path):
     # Les TROIS chemins derivent de la source, et non des defauts relatifs
     # au repertoire courant : c'est ce qui empeche deux sources de partager
     # un cache et un tri.
-    assert porteur.cache_path.endswith("autre.mp4-analysis.json")
-    assert porteur.etat["decisions_path"].endswith("autre.mp4-decisions.json")
-    assert porteur.etat["dossier_vignettes"].endswith("autre.mp4-vignettes")
+    travail = tmp_path / "autre.mp4-eclipse"
+    assert porteur.cache_path == str(travail / "analysis.json")
+    assert porteur.etat["decisions_path"] == str(travail / "decisions.json")
+    assert porteur.etat["dossier_vignettes"] == str(travail / "vignettes")
+    # Et le dossier existe : les taches y ecrivent, et analyze n'ouvre pas
+    # son cache en creant les parents.
+    assert os.path.isdir(travail)
 
 
 def test_post_source_sur_un_fichier_illisible_rend_400(tmp_path):
@@ -2245,12 +2258,211 @@ def test_deux_extensions_du_meme_radical_ne_partagent_rien(tmp_path):
     assert mp4["cache_path"] != str(tmp_path / "eclipse.mp4")
 
 
+# -- Tache « dossier de travail » : tous les derives du viewer vivent dans
+# <source>-eclipse/, et l'ancienne disposition y est remontee, en le disant.
+
+def test_derived_paths_live_in_the_work_folder(tmp_path):
+    """The three irreplaceable derived paths, inside one injective folder."""
+    src = str(tmp_path / "eclipse.mp4")
+    d = chemins_derives(src)
+    dossier = tmp_path / "eclipse.mp4-eclipse"
+    assert work_folder(src) == str(dossier)
+    assert d["cache_path"] == str(dossier / "analysis.json")
+    assert d["decisions_path"] == str(dossier / "decisions.json")
+    assert d["dossier_vignettes"] == str(dossier / "vignettes")
+    # Nothing was created: these are NAMES (see chemins_derives).
+    assert not dossier.exists()
+
+
+def test_the_work_folder_keeps_the_extension_so_it_stays_injective(tmp_path):
+    """The invariant work_folder inherited from the old prefix naming.
+
+    Strip the extension and eclipse.mov and eclipse.mp4 -- a source next to
+    its transcode is ordinary here -- would share one folder, hence one
+    decisions file, and clicking one frame on the .mov would overwrite the
+    whole review of the .mp4 (enregistrer, os.replace).
+    """
+    mov, mp4 = str(tmp_path / "eclipse.mov"), str(tmp_path / "eclipse.mp4")
+    assert work_folder(mov) != work_folder(mp4)
+    # The render and the PNG export used to keep that collision -- they
+    # stripped the extension. Now they are in the folder too.
+    assert _sortie_rendu(mov) != _sortie_rendu(mp4)
+    assert _dossier_png(mov) != _dossier_png(mp4)
+    # And the folder is strictly longer than the source, so no derived path
+    # can ever designate the video it came from.
+    assert work_folder(mp4) != mp4
+    assert len(work_folder(mp4)) > len(mp4)
+
+
+def test_render_and_png_outputs_live_in_the_work_folder(tmp_path):
+    """Both inside the folder, but the RENDER keeps a name of its own.
+
+    The mp4 is the file that gets copied out of the folder and sent around:
+    an anonymous clean.mp4 in a download folder would have lost which
+    eclipse it came from. The PNG folder never leaves, so a simple name
+    does.
+    """
+    from eclipse.descripteur import chemin_descripteur
+
+    src = str(tmp_path / "eclipse.mp4")
+    dossier = tmp_path / "eclipse.mp4-eclipse"
+    assert _sortie_rendu(src) == str(dossier / "eclipse-clean.mp4")
+    assert _dossier_png(src) == str(dossier / "frames")
+    # The descriptor follows its render without being told to: both derive
+    # from the output path.
+    assert (chemin_descripteur(_sortie_rendu(src))
+            == str(dossier / "eclipse-clean.json"))
+
+
+def _ancienne_disposition(src):
+    """Ecrit les six derives de l'ANCIENNE disposition, a cote de la source.
+
+    Contenus reconnaissables : ce que la migration doit retrouver intact de
+    l'autre cote, et non seulement un fichier du bon nom.
+    """
+    sans_ext = os.path.splitext(src)[0]
+    fichiers = {src + "-analysis.json": b'{"vieux":"cache"}',
+                src + "-decisions.json": b'{"vieux":"tri"}',
+                sans_ext + "-clean.mp4": b"le rendu precedent",
+                sans_ext + "-clean.json": b'{"vieux":"descripteur"}'}
+    for chemin, contenu in fichiers.items():
+        with open(chemin, "wb") as f:
+            f.write(contenu)
+    dossiers = {}
+    for dossier, nom, contenu in (
+            (src + "-vignettes", "frame-00001.jpg", b"vignette"),
+            (sans_ext + "-frames", "frame-00001.png", b"png")):
+        os.makedirs(dossier)
+        with open(os.path.join(dossier, nom), "wb") as f:
+            f.write(contenu)
+        dossiers[dossier] = (nom, contenu)
+    return fichiers, dossiers
+
+
+def test_taking_a_source_migrates_the_old_layout(tmp_path, capsys):
+    """Les fichiers de l'ancienne disposition remontent dans le dossier.
+
+    Deplaces, pas copies ni recrees : l'ancien chemin doit avoir disparu,
+    sinon l'operateur garde deux exemplaires d'un tri manuel et ne sait plus
+    lequel le viewer lit.
+    """
+    src = _cree_video(tmp_path)
+    fichiers, dossiers = _ancienne_disposition(src)
+    d = chemins_derives(src)
+
+    porteur = Porteur(None, None, None, None)
+    porteur.change_source(src)
+
+    dossier = work_folder(src)
+    attendus = {d["cache_path"]: b'{"vieux":"cache"}',
+                d["decisions_path"]: b'{"vieux":"tri"}',
+                _sortie_rendu(src): b"le rendu precedent",
+                os.path.join(dossier, "src-clean.json"):
+                    b'{"vieux":"descripteur"}'}
+    for chemin, contenu in attendus.items():
+        with open(chemin, "rb") as f:
+            assert f.read() == contenu, chemin
+    for nouveau, ancien in ((d["dossier_vignettes"], src + "-vignettes"),
+                            (_dossier_png(src),
+                             os.path.splitext(src)[0] + "-frames")):
+        nom, contenu = dossiers[ancien]
+        with open(os.path.join(nouveau, nom), "rb") as f:
+            assert f.read() == contenu, nouveau
+    # Et plus rien sous l'ancien nom : c'est un deplacement.
+    for ancien in list(fichiers) + list(dossiers):
+        assert not os.path.exists(ancien), ancien
+
+    # Annonce : UNE ligne, en francais, qui nomme ce qui a bouge. Un
+    # deplacement silencieux laisserait l'operateur chercher ses fichiers.
+    sortie = capsys.readouterr().out
+    lignes = [ligne for ligne in sortie.splitlines()
+              if "Fichiers de travail deplaces" in ligne]
+    assert len(lignes) == 1, sortie
+    for etiquette in ("analysis.json", "decisions.json", "vignettes/",
+                      "src-clean.mp4", "src-clean.json", "frames/"):
+        assert etiquette in lignes[0], etiquette
+    assert dossier in lignes[0]
+
+
+def test_migration_leaves_the_old_file_when_the_new_one_exists(tmp_path,
+                                                               capsys):
+    """Le neuf gagne, et l'ancien n'est pas ecrase pour autant.
+
+    Le dossier porte ce que le viewer y a ecrit depuis ; ecraser avec
+    l'ancien detruirait un tri manuel, exactement la perte que ce projet a
+    deja subie. Et l'ancien reste sur le disque : la migration ne supprime
+    rien.
+    """
+    src = _cree_video(tmp_path)
+    d = chemins_derives(src)
+    os.makedirs(work_folder(src))
+    with open(d["decisions_path"], "wb") as f:
+        f.write(b'{"neuf":"tri"}')
+    with open(src + "-decisions.json", "wb") as f:
+        f.write(b'{"vieux":"tri"}')
+
+    Porteur(None, None, None, None).change_source(src)
+
+    with open(d["decisions_path"], "rb") as f:
+        assert f.read() == b'{"neuf":"tri"}'
+    with open(src + "-decisions.json", "rb") as f:
+        assert f.read() == b'{"vieux":"tri"}'
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+
+
+def test_migration_honors_an_explicit_command_line_path(tmp_path, capsys):
+    """--decisions vise l'ancien nom : le fichier ne bouge pas sous ses pieds.
+
+    La ligne de commande est honoree telle quelle. Deplacer le fichier que
+    l'operateur vient de nommer serait la substitution silencieuse contre
+    laquelle tout ce module est ecrit.
+    """
+    src = _cree_video(tmp_path)
+    decisions_cli = src + "-decisions.json"
+    with open(decisions_cli, "wb") as f:
+        f.write(b'{"la":"ligne de commande"}')
+
+    Porteur(src, str(tmp_path / "a.json"), decisions_cli, str(tmp_path / "v"))
+
+    with open(decisions_cli, "rb") as f:
+        assert f.read() == b'{"la":"ligne de commande"}'
+    assert not os.path.exists(chemins_derives(src)["decisions_path"])
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+
+
+def test_taking_a_source_without_old_files_creates_the_folder_silently(
+        tmp_path, capsys):
+    """Le cas courant : rien a migrer, un dossier pret, et pas un mot."""
+    src = _cree_video(tmp_path)
+    porteur = Porteur(None, None, None, None)
+    porteur.change_source(src)
+    assert os.path.isdir(work_folder(src))
+    assert os.listdir(work_folder(src)) == []
+    assert "Fichiers de travail deplaces" not in capsys.readouterr().out
+
+
+def test_a_refused_source_leaves_no_work_folder(tmp_path):
+    """La migration passe avant la validation : elle ne doit rien laisser.
+
+    _migre_disposition ne cree le dossier que s'il a quelque chose a y
+    mettre, et la creation du dossier attend que construit_etat ait accepte
+    la source : un chemin mal tape ne seme pas de dossiers vides.
+    """
+    faux = tmp_path / "faux.mp4"
+    faux.write_bytes(b"ceci n'est pas une video")
+    porteur = Porteur(None, None, None, None)
+    with pytest.raises(ValueError):
+        porteur.change_source(str(faux))
+    assert not os.path.exists(work_folder(str(faux)))
+
+
 def test_revenir_a_la_source_de_la_ligne_de_commande_avertit(tmp_path, capsys):
     """Important 4 : le tri de la ligne de commande, orpheline en silence.
 
     « viewer A.mp4 » ecrit les revues dans le fichier de la LIGNE DE
     COMMANDE. Basculer vers B.mp4 puis revenir a A.mp4 depuis la page fait
-    lire A.mp4-decisions.json, qui n'existe pas : charger() rend {} et, le
+    lire A.mp4-eclipse/decisions.json, qui n'existe pas : charger() rend {}
+    et, le
     fichier etant ABSENT, diagnostique() rend None. Aucun avertissement
     n'atteignait la page, rien n'etait imprime, et la revue de A
     disparaissait de l'interface sans un mot.
@@ -2325,6 +2537,10 @@ def test_l_avertissement_de_tri_orphelin_survit_au_premier_clic(tmp_path):
     """
     a = _cree_video(tmp_path, nom="A.mp4")
     derives = chemins_derives(a)
+    # chemins_derives ne cree rien -- ce sont des noms (voir sa docstring) --
+    # et analyze ouvre son cache sans creer de parent : c'est le porteur qui
+    # cree le dossier de travail en production, ici c'est au test de le faire.
+    os.makedirs(work_folder(a), exist_ok=True)
     analyze(a, derives["cache_path"], scale=1.0)
     genere(a, derives["dossier_vignettes"], _signature_source(a))
     decisions_cli = str(tmp_path / "decisions-ligne-de-commande.json")

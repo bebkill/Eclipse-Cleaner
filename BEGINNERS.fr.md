@@ -22,7 +22,7 @@ Si vous voulez simplement que ça marche, les étapes ci-dessous ne sont même p
 
 Encore une chose à savoir : une **fenêtre noire** s'ouvre à côté du navigateur. C'est le programme lui-même, qui affiche sa progression. La fermer arrête Eclipse Cleaner.
 
-**Pour désinstaller** : supprimez le fichier exe — rien d'autre n'est installé sur votre système. Les fichiers de travail (`analysis.json`, `decisions.json`, un dossier de vignettes, la vidéo nettoyée) sont créés à côté de votre vidéo source ; supprimez-les aussi si vous le souhaitez.
+**Pour désinstaller** : supprimez le fichier exe — rien d'autre n'est installé sur votre système. Les fichiers de travail (`analysis.json`, `decisions.json`, un dossier de vignettes, la vidéo nettoyée) vivent tous dans un seul dossier créé à côté de votre vidéo source, nommé d'après elle avec `-eclipse` ajouté — `moneclipse.mp4-eclipse/` ; supprimez ce dossier aussi si vous le souhaitez. Si vous avez utilisé une version antérieure, dont les fichiers de travail traînaient à côté de la vidéo, ils sont déplacés dans ce dossier la première fois que la nouvelle version ouvre votre vidéo, et la fenêtre du terminal le dit.
 
 C'est toute l'installation. Tout ce que décrit [l'utilisation dans le README](README.fr.md#utilisation) s'applique tel quel — vous pouvez arrêter votre lecture ici. La suite de cette page est la voie classique par Python, qui fonctionne aussi sous macOS et Linux et rend les mises à jour plus légères à télécharger.
 
@@ -82,7 +82,7 @@ Une page s'ouvre dans votre navigateur web. À partir de là, plus aucune comman
 
 1. Cliquez sur **Parcourir…** et choisissez votre vidéo d'éclipse.
 2. Lancez les trois étapes affichées sur la page : extraire les vignettes, analyser les frames, produire la vidéo finale. Le type d'éclipse — Soleil, Lune ou transit planétaire — est détecté automatiquement à l'étape d'analyse ; si la suggestion semble fausse, changez-la dans le panneau Source.
-3. La vidéo nettoyée est écrite **à côté de votre originale**, avec `-clean` ajouté à son nom (ex. `moneclipse-clean.mp4`).
+3. La vidéo nettoyée est écrite **dans le dossier de travail créé à côté de votre originale** (`moneclipse.mp4-eclipse/`), avec `-clean` ajouté à son nom (ex. `moneclipse-clean.mp4`). Recopiez-la où vous voulez — elle garde un nom propre justement pour ça.
 
 Gardez la fenêtre du terminal ouverte pendant que vous utilisez Eclipse Cleaner — c'est le moteur qui tourne derrière la page. Quand vous avez terminé, fermez simplement l'onglet du navigateur et la fenêtre du terminal.
 

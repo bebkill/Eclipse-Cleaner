@@ -22,7 +22,7 @@ If you just want it to work, you don't even need the steps below:
 
 One more thing to know: a **black window** opens alongside your browser. That's the program itself, showing its progress. Closing it stops Eclipse Cleaner.
 
-**To uninstall**: delete the exe file — nothing else is installed on your system. The work files (`analysis.json`, `decisions.json`, a thumbnail folder, the cleaned video) are created next to your source video; delete them too if you wish.
+**To uninstall**: delete the exe file — nothing else is installed on your system. The work files (`analysis.json`, `decisions.json`, a thumbnail folder, the cleaned video) all live in a single folder created next to your source video, named after it with `-eclipse` added — `myeclipse.mp4-eclipse/`; delete that folder too if you wish. If you used an earlier version, whose work files sat loose next to the video, they are moved into that folder the first time the new version opens your video, and the terminal window says so.
 
 That's the whole installation. Everything from [Usage in the README](README.md#usage) applies as-is — you can stop reading here. The rest of this page is the classic route through Python, which also works on macOS and Linux and makes updates lighter to download.
 
@@ -82,7 +82,7 @@ A page opens in your web browser. From there, no more commands — everything is
 
 1. Click **Browse…** and pick your eclipse video.
 2. Run the three steps shown on the page: extract the thumbnails, analyze the frames, produce the final video. The eclipse type — sun, moon, or a planetary transit — is detected automatically at the analysis step; if the suggestion looks wrong, change it in the Source panel.
-3. The cleaned video is written **next to your original**, with `-clean` added to its name (e.g. `myeclipse-clean.mp4`).
+3. The cleaned video is written **into the work folder next to your original** (`myeclipse.mp4-eclipse/`), with `-clean` added to its name (e.g. `myeclipse-clean.mp4`). Copy it out wherever you like — it keeps a name of its own for exactly that.
 
 Keep the terminal window open while you use Eclipse Cleaner — it's the engine running behind the page. When you're done, simply close the browser tab and the terminal window.
 

@@ -812,7 +812,8 @@ def main(argv=None):
                 raise ValueError(
                     "--frames-dir n'est pas accepte par le viewer. "
                     "Le rendu lance depuis la page exporte la sequence PNG "
-                    "dans <source>-frames, a cote de la video source. "
+                    "dans <source>-eclipse/frames, le dossier de travail "
+                    "cree a cote de la video source. "
                     "Pour choisir un autre dossier, utiliser la commande "
                     "render."
                 )

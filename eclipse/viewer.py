@@ -269,42 +269,150 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
             "frames": donnees["frames"], "fps": donnees.get("fps", 30.0)}
 
 
-def chemins_derives(source):
-    """Cache, decisions et vignettes a cote de la source.
+#: Suffix of the per-video work folder. Appended to the FULL source
+#: filename, extension included -- see work_folder for why.
+SUFFIXE_TRAVAIL = "-eclipse"
 
-    --cache vaut « analysis.json » et --decisions « decisions.json », deux
-    noms RELATIFS au repertoire courant. Tant que le viewer voyait une seule
-    source c'etait supportable ; des qu'on en choisit une dans la page, deux
-    sources partageraient le meme cache et le meme tri -- les decisions
-    prises sur la video A appliquees a la video B. Ce n'est pas une
-    hypothese : le rendu lance depuis la page avait deja eu ce defaut.
 
-    L'EXTENSION EST CONSERVEE, et c'est le point le plus important de cette
-    fonction. En retirant l'extension, eclipse.mov et eclipse.mp4 -- tous
-    deux offerts par dialogue.EXTENSIONS_VIDEO, et une source avec son
-    transcodage dans un meme dossier est ordinaire ici -- donnaient des
-    chemins identiques au bit. Le chemin destructeur : ouvrir eclipse.mov,
-    voir l'avertissement « decisions d'une autre source », cliquer une frame,
-    et enregistrer() (os.replace) ecrase TOUT le tri de eclipse.mp4. C'est
-    exactement l'invariant que cette fonction existe pour tenir, et il
-    tombait.
-    Le nom complet en prefixe rend la derivation INJECTIVE par construction :
-    deux sources distinctes ne peuvent pas produire le meme nom, sans avoir a
-    raisonner sur des cas. Et le resultat est strictement plus long que la
-    source, donc aucun derive ne peut jamais designer la source elle-meme.
+def work_folder(source):
+    """The folder holding everything the viewer derives from this source.
 
-    ASYMETRIE ASSUMEE avec _sortie_rendu et _dossier_png, qui retirent
-    l'extension et gardent donc leur collision : les trois chemins d'ici
-    portent du travail IRREMPLACABLE -- un tri manuel ne se reproduit pas, et
-    ce projet vient d'en perdre un -- tandis qu'un rendu et un export PNG se
-    regagnent en faisant tourner la machine, et ont deja leur porte de
-    consentement (le drapeau `ecraser`). Ce n'est pas un oubli.
+    "<source>-eclipse", a sibling of the video: `holiday.mp4` gets
+    `holiday.mp4-eclipse/`. Derived files used to be scattered NEXT TO the
+    source, one `-analysis.json`, one `-decisions.json`, one `-vignettes/`,
+    one `-clean.mp4` and one `-frames/` per video; a folder holding a few
+    videos became unreadable. One folder per video keeps them together, and
+    keeps the two invariants the old naming already had:
 
-    Rien n'est cree ni efface ici : ce sont des NOMS.
+    THE EXTENSION IS KEPT, and this is the most important line here. Strip
+    it and eclipse.mov and eclipse.mp4 -- both offered by
+    dialogue.EXTENSIONS_VIDEO, and a source next to its transcode in one
+    folder is ordinary here -- would share a work folder, hence a decisions
+    file. The destructive path: open eclipse.mov, see the "decisions of
+    another source" warning, click one frame, and enregistrer() (os.replace)
+    overwrites ALL of eclipse.mp4's review. Keeping the full filename makes
+    the derivation INJECTIVE by construction: two distinct sources cannot
+    produce the same folder, with no case to reason about.
+
+    And the folder name is strictly LONGER than the source's, so it can
+    never designate the source itself -- nothing derived can ever overwrite
+    the video it came from.
+
+    Nothing is created or removed here: this is a NAME. The folder itself is
+    created when a porteur takes the source (see Porteur._pose).
     """
-    return {"cache_path": source + "-analysis.json",
-            "decisions_path": source + "-decisions.json",
-            "dossier_vignettes": source + "-vignettes"}
+    return source + SUFFIXE_TRAVAIL
+
+
+def chemins_derives(source):
+    """Cache, decisions and thumbnails, inside the source's work folder.
+
+    --cache defaults to "analysis.json" and --decisions to "decisions.json",
+    two names RELATIVE to the current directory. While the viewer saw a
+    single source that was bearable; as soon as one is chosen in the page,
+    two sources would share one cache and one review -- the decisions taken
+    on video A applied to video B. Not a hypothesis: the render launched
+    from the page already had that defect.
+
+    The names inside the folder are SIMPLE -- analysis.json, decisions.json,
+    vignettes/ -- because the folder already carries the identity of the
+    source (see work_folder, which holds the injectivity invariant). There
+    is no longer any asymmetry with _sortie_rendu and _dossier_png: they
+    used to strip the extension and therefore kept a collision that this
+    function refused, and now all five derived paths live in the same
+    injective folder. The one thing that keeps a self-identifying name is
+    the RENDERED VIDEO, because it gets copied out of the folder.
+
+    Nothing is created or removed here: these are NAMES.
+    """
+    dossier = work_folder(source)
+    return {"cache_path": os.path.join(dossier, "analysis.json"),
+            "decisions_path": os.path.join(dossier, "decisions.json"),
+            "dossier_vignettes": os.path.join(dossier, "vignettes")}
+
+
+def _anciens_chemins(source):
+    """(old path, new path, label) for every derived file of the OLD layout.
+
+    The layout before the work folder: every derived file was a sibling of
+    the source, named after it. Read by _migre_disposition, which is the
+    only reason these names still exist in the code.
+
+    The labels are what the migration line prints, so they are the NEW
+    basenames -- what the operator will actually find in the folder.
+    """
+    from .descripteur import chemin_descripteur
+
+    dossier = work_folder(source)
+    sans_ext = os.path.splitext(source)[0]
+    ancien_rendu = sans_ext + "-clean.mp4"
+    nouveau_rendu = _sortie_rendu(source)
+    return [
+        (source + "-analysis.json",
+         os.path.join(dossier, "analysis.json"), "analysis.json"),
+        (source + "-decisions.json",
+         os.path.join(dossier, "decisions.json"), "decisions.json"),
+        (source + "-vignettes",
+         os.path.join(dossier, "vignettes"), "vignettes/"),
+        (ancien_rendu, nouveau_rendu, os.path.basename(nouveau_rendu)),
+        # The descriptor follows its render: both sides derive their path
+        # from the video's, so naming the two videos names the two .json.
+        (chemin_descripteur(ancien_rendu),
+         chemin_descripteur(nouveau_rendu),
+         os.path.basename(chemin_descripteur(nouveau_rendu))),
+        (sans_ext + "-frames", _dossier_png(source), "frames/"),
+    ]
+
+
+def _migre_disposition(source, honores=()):
+    """Moves this source's old-layout derived files into its work folder.
+
+    Announced, in one French line on the terminal (the house pattern of the
+    ATTENTION prints in change_source): files the operator left next to his
+    video must not silently move without him being able to find them again.
+
+    THE NEW ONE WINS. When both the old and the new path exist for one item,
+    nothing is done for that item: the folder holds what the viewer has been
+    writing since, and the old file stays untouched rather than being
+    overwritten -- the same rule that keeps a decisions file, which cannot
+    be reproduced, from being destroyed by a rename.
+
+    `honores` are the paths this porteur was actually GIVEN (the explicit
+    --cache / --decisions of the command line). An old-layout name that is
+    also one of them is left exactly where it is: the command line is
+    honored verbatim, and moving a file out from under the path the operator
+    named would be the very silent substitution this function exists to
+    avoid.
+
+    os.replace, not a copy: the two paths are siblings in one tree, hence
+    the same volume, and a rename moves a directory as well as a file. A
+    failure (a file held open by the explorer, an antivirus) is NAMED and
+    swallowed: it leaves the item under its old name, which the viewer will
+    simply read as missing -- never a half-move.
+
+    The folder is created only if there is something to move, so a source
+    that is refused a moment later (see Porteur._pose) leaves nothing
+    behind.
+    """
+    deplaces = []
+    dossier = work_folder(source)
+    honores = {os.path.normcase(os.path.abspath(c)) for c in honores if c}
+    for ancien, nouveau, etiquette in _anciens_chemins(source):
+        if os.path.normcase(os.path.abspath(ancien)) in honores:
+            continue
+        if os.path.exists(nouveau) or not os.path.exists(ancien):
+            continue
+        try:
+            os.makedirs(dossier, exist_ok=True)
+            os.replace(ancien, nouveau)
+        except OSError as exc:
+            print(f"ATTENTION : {ancien} n'a pas pu etre deplace dans "
+                  f"{dossier} ({exc})")
+            continue
+        deplaces.append(etiquette)
+    if deplaces:
+        print(f"Fichiers de travail deplaces dans {dossier} : "
+              f"{', '.join(deplaces)}")
 
 
 def _etat_vide():
@@ -434,9 +542,28 @@ class Porteur:
         refaire, le faux negatif que ce chantier interdit. Une seule
         orthographe, plus de desalignement possible.
 
+        LA MIGRATION PASSE AVANT construit_etat, donc avant la validation de
+        la source, et c'est un choix. L'inverse serait plus prudent en
+        apparence -- ne rien deplacer pour une source qu'on va refuser --
+        mais construit_etat LIT le cache, les decisions et les vignettes :
+        les lire avant de deplacer ferait rapporter « rien n'existe » sur
+        une video dont tout le travail est la, sous l'ancienne disposition,
+        et l'operateur verrait une page vide jusqu'au rechargement suivant.
+        Le risque pris est nul : les fichiers deplaces appartiennent a CE
+        chemin de source de toute facon, et _migre_disposition ne cree le
+        dossier que s'il a quelque chose a y mettre (voir sa docstring), donc
+        une source illisible ne laisse rien derriere elle.
+
+        Le dossier de travail, lui, est assure APRES la construction de
+        l'etat : c'est la que les taches ecriront (analyze ouvre son cache
+        sans creer de parent), et le creer avant la validation serait un
+        dossier vide par chemin mal tape.
         """
         from .pipeline import charger_cache
 
+        if source is not None:
+            _migre_disposition(source, (cache_path, decisions_path,
+                                        dossier_vignettes))
         requested = self.preset_choisi or self.preset_cli
         suggested = None
         if (source is not None and requested is None
@@ -452,6 +579,12 @@ class Porteur:
             self.seuils, self.tolerance_bord, self.seuil_masque, self.cadrage,
             self.couleur,
             preset_demande=requested, preset_suggere=suggested)
+        if source is not None:
+            # La source est lisible (construit_etat n'a pas leve) : le
+            # dossier de travail peut naitre. Les taches y ecrivent toutes --
+            # decisions.enregistrer, analyze, vignettes.genere, le rendu --
+            # et seule genere() cree son dossier elle-meme.
+            os.makedirs(work_folder(source), exist_ok=True)
         # Une DONNEE, pas un verdict : le fichier de decisions demande en
         # ligne de commande, que _tri_orpheline compare au chemin derive a
         # chaque requete. Le calcul n'est deliberement pas fige ici, voir
@@ -498,7 +631,9 @@ class Porteur:
         Le cache, les decisions et les vignettes sont DERIVES de la source
         (voir chemins_derives) et non repris de la ligne de commande : deux
         sources choisies dans la page partageraient sinon le meme cache et
-        le meme tri.
+        le meme tri. Ils vivent dans le dossier de travail de la source, que
+        _pose cree, et ou _pose remonte au passage les fichiers laisses par
+        l'ancienne disposition (voir _migre_disposition).
 
         La validation est celle de construit_etat, qui commence par probe() :
         un fichier absent leve FileNotFoundError, un fichier qui n'est pas
@@ -643,16 +778,23 @@ def _texte_avertissement(fait):
 
 
 def _sortie_rendu(source):
-    """La sortie par defaut : <source sans extension>-clean.mp4.
+    """The default output: <work folder>/<source basename>-clean.mp4.
 
-    Retire l'extension, contrairement a chemins_derives qui la conserve :
-    eclipse.mov et eclipse.mp4 visent donc le meme -clean.mp4. Asymetrie
-    assumee, voir chemins_derives -- un rendu se refait, un tri manuel non,
-    et l'ecrasement passe ici par le consentement du drapeau `ecraser`.
+    Inside the work folder like every other derived file, but the ONE that
+    keeps a self-identifying basename rather than a simple "clean.mp4": this
+    is the file that gets copied, sent and shared OUT of the folder, and an
+    anonymous clean.mp4 sitting in a download folder next to three others
+    would have lost which eclipse it came from.
+
+    The extension is stripped from the BASENAME only, so the old collision
+    is gone: eclipse.mov and eclipse.mp4 both name their render
+    "eclipse-clean.mp4", but each one lives in its own injective folder (see
+    work_folder). No asymmetry with chemins_derives left to assume.
     """
     from .pipeline import _chemin_canonique
 
-    sortie = os.path.splitext(source)[0] + "-clean.mp4"
+    radical = os.path.splitext(os.path.basename(source))[0]
+    sortie = os.path.join(work_folder(source), radical + "-clean.mp4")
     # La contrainte du projet, transformee en assertion : la source ne doit
     # jamais etre ecrasee. Une extension inattendue ne doit pas suffire a
     # faire coincider les deux chemins. Comparaison canonique (casse
@@ -664,15 +806,20 @@ def _sortie_rendu(source):
 
 
 def _dossier_png(source):
-    """Le dossier de la sequence PNG : <source sans extension>-frames.
+    """The PNG sequence folder: <work folder>/frames.
 
-    Retire l'extension, contrairement a chemins_derives qui la conserve :
-    eclipse.mov et eclipse.mp4 visent donc le meme dossier. Asymetrie
-    assumee et non oubli, voir chemins_derives -- un export PNG se refait,
-    un tri manuel non, et l'ecrasement passe ici par le consentement du
-    drapeau `ecraser`.
+    A simple name, like the cache and the decisions: the work folder already
+    says which video this is (see work_folder). eclipse.mov and eclipse.mp4
+    no longer share it -- the collision the old <source sans
+    extension>-frames kept is gone with the folder, and so is the asymmetry
+    chemins_derives used to have to justify.
+
+    Nested inside the folder and NOT inside the source's own directory,
+    which is what keeps _verifie_dossier_png satisfiable: the render
+    launched from the page swaps this folder whole, and it must never
+    contain the video.
     """
-    return os.path.splitext(source)[0] + "-frames"
+    return os.path.join(work_folder(source), "frames")
 
 
 def _tri_orpheline(etat):
@@ -681,7 +828,8 @@ def _tri_orpheline(etat):
     Le trou qu'elle bouche : « viewer A.mp4 » ecrit les revues dans le
     fichier de la LIGNE DE COMMANDE (./decisions.json par defaut). Basculer
     vers B.mp4 puis revenir a A.mp4 depuis la page fait lire
-    A.mp4-decisions.json, qui n'existe pas. charger() rend {} et, le fichier
+    A.mp4-eclipse/decisions.json, qui n'existe pas. charger() rend {} et, le
+    fichier
     etant ABSENT, diagnostique() rend None : aucun avertissement n'atteignait
     la page, rien n'etait imprime, et la revue de A disparaissait de
     l'interface sans un mot.
@@ -1820,6 +1968,12 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
     ligne de commande, cache_path / decisions_path / dossier_vignettes sont
     ceux de la ligne de commande et rien ne change ; quand elle est choisie
     dans la page, les trois sont DERIVES d'elle (voir chemins_derives).
+
+    Dans les deux cas le Porteur cree le dossier de travail de la source et
+    y remonte les fichiers de l'ancienne disposition, en le disant au
+    terminal (voir _migre_disposition) : le rendu et l'export PNG lances
+    depuis la page y atterrissent, ligne de commande ou non. Un chemin
+    donne explicitement en --cache ou --decisions est laisse ou il est.
 
     seuils, tolerance_bord, seuil_masque : transmis tels quels a
     construit_etat, memes parametres de tri que pipeline.render — voir

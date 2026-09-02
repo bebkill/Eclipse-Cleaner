@@ -136,9 +136,9 @@ def _repertoire_jetable(tmp_path, monkeypatch, _empreinte_depot):
        pointant dans data/ ; test_quality et test_render l'importent. Il n'est
        aujourd'hui que lu, mais le jour ou un test le passe a Porteur ou a
        change_source et declenche une decision, une analyse ou un rendu, la
-       suite ecrit data/<video>-decisions.json, -analysis.json, -vignettes/,
-       -clean.mp4 -- a cote de la source de production, et le chdir n'y voit
-       rien.
+       suite ecrit tout un data/<video>-eclipse/ -- decisions.json,
+       analysis.json, vignettes/, le rendu -- a cote de la source de
+       production, et le chdir n'y voit rien.
 
     3. QUATRE APPELS D'ECRITURE SONT REFUSES QUAND ILS VISENT LE DEPOT :
        os.replace, os.rename, builtins.open et io.open en mode d'ecriture.
