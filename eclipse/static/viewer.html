@@ -622,6 +622,18 @@
      column off-screen. max-width: 100% covers the horizontal case, where
      the rail is narrow. */
   #apercu-video { display: block; max-width: 100%; max-height: 40vh; }
+  /* The custom bar: buttons pick up the shared `button` rule above as-is
+     (same look, no extra classes needed), only the row layout is added
+     here. Time display in the same muted color as the rest of the panel's
+     secondary text. */
+  #apercu-controles {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  #apercu-timeline { flex: 1 1 auto; accent-color: var(--accent); }
+  #apercu-temps {
+    font-size: 12px; color: var(--texte-faible);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
   #apercu-indisponible {
     margin: 8px 0 0; font-size: 12px; color: var(--texte-faible);
   }
@@ -962,7 +974,16 @@ try {
          once per source change, and nothing else ever touches .open. -->
     <details id="apercu-source" hidden>
       <summary data-t="apercu_titre">Vidéo source brute</summary>
-      <video id="apercu-video" controls preload="metadata"></video>
+      <video id="apercu-video" preload="metadata"></video>
+      <!-- Custom playback bar, replacing the native <video controls> chrome
+           removed above: play/pause, stop, and a manual timeline only --
+           no volume or fullscreen, per the feature request. -->
+      <div id="apercu-controles">
+        <button id="apercu-lecture"></button>
+        <button id="apercu-stop" data-t="apercu_stop">Stop</button>
+        <input type="range" id="apercu-timeline" min="0" value="0" step="0.1">
+        <span id="apercu-temps">0:00 / 0:00</span>
+      </div>
       <p id="apercu-indisponible" hidden></p>
     </details>
   </div>
@@ -1416,6 +1437,16 @@ document.addEventListener("keydown", (e) => {
   // absence serait un defaut silencieux, decouvert en tapant dedans.
   const cible = e.target;
   if (cible && cible.tagName === "INPUT" && cible.type !== "checkbox") return;
+  // The raw player's own controls (play/pause, stop, timeline) live inside
+  // #apercu-controles and must keep their keys: without this, the global
+  // Space shortcut above would fight the play button's own Space/Enter
+  // activation, and dragging the timeline with arrow keys would also step
+  // the filmstrip's selection. No such guard existed for any other form
+  // control before this bar (the eclipse-type <select> and the filter
+  // checkboxes just happen not to collide with the keys they're focused
+  // for); this one is scoped narrowly to the new bar rather than widened
+  // to every control on the page.
+  if (cible && cible.closest && cible.closest("#apercu-controles")) return;
   if (e.key === " ") { e.preventDefault(); lecture(!etat.lecture); }
   else if (e.key === "ArrowRight") pasSelection(+1);
   else if (e.key === "ArrowLeft") pasSelection(-1);
@@ -1743,6 +1774,10 @@ const elSourceMessage = document.getElementById("source-message");
 const elApercuSource = document.getElementById("apercu-source");
 const elApercuVideo = document.getElementById("apercu-video");
 const elApercuIndisponible = document.getElementById("apercu-indisponible");
+const elApercuLecture = document.getElementById("apercu-lecture");
+const elApercuStop = document.getElementById("apercu-stop");
+const elApercuTimeline = document.getElementById("apercu-timeline");
+const elApercuTemps = document.getElementById("apercu-temps");
 const elRailTitle = document.getElementById("rail-title");
 const elEclipseType = document.getElementById("eclipse-type");
 const elTypeRow = document.getElementById("eclipse-type-row");
@@ -2249,6 +2284,10 @@ function rafraichitTextesDynamiques() {
   // again after that.
   if (previewUnavailableShown)
     elApercuIndisponible.textContent = t("apercu_indisponible");
+  // The play button's label toggles Play/Pause off the video's own state
+  // (see refreshApercuPlayLabel), not a data-t: repaint it here too, or a
+  // language switch mid-playback would leave it showing the old language.
+  refreshApercuPlayLabel();
   majZoneLancement();
   if (typeof window.rafraichitTheme === "function") window.rafraichitTheme();
   if (typeof window.rafraichitLangue === "function") window.rafraichitLangue();
@@ -2716,12 +2755,105 @@ function pointPreviewAt(source) {
   // until the fresh response arrives.
   elApercuVideo.src = "/video?ts=" + Date.now();
   lastPreviewSource = source;
+  // Reset the custom bar for the incoming source: its own loadedmetadata
+  // (below) refreshes the timeline's max and re-enables it once the new
+  // video reports a real duration; until then the slider stays at rest
+  // and disabled rather than showing the previous source's range.
+  elApercuTimeline.value = 0;
+  elApercuTimeline.max = 0;
+  elApercuTimeline.disabled = true;
+  refreshApercuPlayLabel();
+  elApercuTemps.textContent = "0:00 / 0:00";
 }
 
 elApercuVideo.addEventListener("error", () => {
   previewUnavailableShown = true;
   elApercuIndisponible.textContent = t("apercu_indisponible");
   elApercuIndisponible.hidden = false;
+});
+
+// Custom playback bar (replaces the native <video controls> chrome removed
+// from #apercu-video): play/pause toggle, stop, and a manual timeline --
+// exactly the three controls the feature asked for.
+
+// The play button's own label, chosen from the video's ACTUAL state
+// (elApercuVideo.paused), not from whichever action the user last clicked.
+// Called from rafraichitTextesDynamiques (language switch), from
+// pointPreviewAt (new source), and from the play/pause events below.
+function refreshApercuPlayLabel() {
+  elApercuLecture.textContent = elApercuVideo.paused ? t("apercu_lecture") : t("apercu_pause");
+}
+
+// Tiny local formatter: M:SS, zero-padded seconds, minutes unpadded.
+function formatApercuTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m + ":" + String(s).padStart(2, "0");
+}
+
+function refreshApercuTime() {
+  elApercuTemps.textContent = formatApercuTime(elApercuVideo.currentTime) + " / " +
+                               formatApercuTime(elApercuVideo.duration);
+}
+
+elApercuLecture.addEventListener("click", () => {
+  if (elApercuVideo.paused) elApercuVideo.play();
+  else elApercuVideo.pause();
+});
+
+// The label follows the video's OWN play/pause events, never the click
+// handler above directly: playback can pause for reasons other than this
+// button (the panel closing, a source switch calling .pause() in
+// pointPreviewAt), and a label driven only by the click would then lie.
+elApercuVideo.addEventListener("play", refreshApercuPlayLabel);
+elApercuVideo.addEventListener("pause", refreshApercuPlayLabel);
+
+elApercuStop.addEventListener("click", () => {
+  elApercuVideo.pause();
+  elApercuVideo.currentTime = 0;
+  // The slider and time display follow via the "pause"/"timeupdate"
+  // events fired by the two lines above -- no direct DOM writes needed.
+});
+
+elApercuVideo.addEventListener("loadedmetadata", () => {
+  // A source ffmpeg can decode but whose duration is unknown (e.g. some
+  // live/streamed containers) reports Infinity or NaN here: leave the
+  // timeline at rest rather than a slider with an unusable range.
+  if (Number.isFinite(elApercuVideo.duration)) {
+    elApercuTimeline.max = elApercuVideo.duration;
+    elApercuTimeline.disabled = false;
+  } else {
+    elApercuTimeline.max = 0;
+    elApercuTimeline.disabled = true;
+  }
+  refreshApercuTime();
+});
+
+elApercuVideo.addEventListener("timeupdate", () => {
+  // Suppressed while the user is dragging: otherwise playback's own
+  // position would fight the drag and snap the thumb back mid-gesture.
+  if (previewDragging) return;
+  elApercuTimeline.value = elApercuVideo.currentTime;
+  refreshApercuTime();
+});
+
+// True while the user is dragging the timeline thumb. Set on "input" (the
+// live drag) and cleared on "change" (drag release) -- the scheme chosen
+// among the coherent options: scrub live so the video visibly seeks as the
+// thumb moves, with this flag suppressing the timeupdate echo above so the
+// thumb doesn't get pulled back to the pre-drag position mid-gesture.
+let previewDragging = false;
+
+elApercuTimeline.addEventListener("input", () => {
+  previewDragging = true;
+  elApercuVideo.currentTime = elApercuTimeline.value;
+  refreshApercuTime();
+});
+
+elApercuTimeline.addEventListener("change", () => {
+  elApercuVideo.currentTime = elApercuTimeline.value;
+  previewDragging = false;
 });
 
 elChoisirSource.addEventListener("click", () => parcourt());
