@@ -2758,10 +2758,14 @@ function pointPreviewAt(source) {
   // Reset the custom bar for the incoming source: its own loadedmetadata
   // (below) refreshes the timeline's max and re-enables it once the new
   // video reports a real duration; until then the slider stays at rest
-  // and disabled rather than showing the previous source's range.
+  // and disabled rather than showing the previous source's range. Play
+  // and stop are re-enabled here too: a source switch must clear whatever
+  // disabled state the PREVIOUS source's "error" listener left behind.
   elApercuTimeline.value = 0;
   elApercuTimeline.max = 0;
   elApercuTimeline.disabled = true;
+  elApercuLecture.disabled = false;
+  elApercuStop.disabled = false;
   refreshApercuPlayLabel();
   elApercuTemps.textContent = "0:00 / 0:00";
 }
@@ -2770,6 +2774,12 @@ elApercuVideo.addEventListener("error", () => {
   previewUnavailableShown = true;
   elApercuIndisponible.textContent = t("apercu_indisponible");
   elApercuIndisponible.hidden = false;
+  // A video that failed to load has nothing for these to act on: without
+  // this, Play would sit there clickable above the "can't play" message,
+  // calling .play() on a source that will only ever error again.
+  elApercuLecture.disabled = true;
+  elApercuStop.disabled = true;
+  elApercuTimeline.disabled = true;
 });
 
 // Custom playback bar (replaces the native <video controls> chrome removed
@@ -2798,7 +2808,10 @@ function refreshApercuTime() {
 }
 
 elApercuLecture.addEventListener("click", () => {
-  if (elApercuVideo.paused) elApercuVideo.play();
+  // play() can reject if the source errored between events (the "error"
+  // listener disabling this button makes that unreachable in practice,
+  // but the catch keeps the console clean if a race slips through).
+  if (elApercuVideo.paused) elApercuVideo.play().catch(() => {});
   else elApercuVideo.pause();
 });
 
@@ -2817,6 +2830,12 @@ elApercuStop.addEventListener("click", () => {
 });
 
 elApercuVideo.addEventListener("loadedmetadata", () => {
+  // A playable source just reported metadata: re-enable play/stop in case
+  // the "error" listener above had disabled them for a PRIOR attempt on
+  // this same source (a source can fire "error" then later recover, e.g.
+  // a transient read failure retried by the browser).
+  elApercuLecture.disabled = false;
+  elApercuStop.disabled = false;
   // A source ffmpeg can decode but whose duration is unknown (e.g. some
   // live/streamed containers) reports Infinity or NaN here: leave the
   // timeline at rest rather than a slider with an unusable range.
