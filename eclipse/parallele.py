@@ -24,7 +24,7 @@ from operator import index
 
 import numpy as np
 
-from .locate import locate_center_regime
+from .locate import locate_both_regimes, locate_center_regime
 from .photometry import measure_photometry
 from .quality import CORONA_FACTOR, masse_captee, measure_quality
 from .render import apply_frame
@@ -115,13 +115,14 @@ def applique(fonction, travaux, processus, bloc=None):
             paquet = list(islice(iterateur, bloc))
 
 
-def mesure_frame(travail):
-    """Mesures d'une frame, passe 1. travail = (rgb, rayon, dark_radius, params).
+def _mesure_regime(gray, rgb, rayon, dark_radius, params, candidate, regime):
+    """Full measures for ONE located candidate, at the radius its regime
+    uses: quality, masse_captee and photometry.
 
-    params: resolved presets.analysis_params dict (vote regime and light
-    threshold). The winning regime is returned so the cache can carry it:
-    quality reads a bright disc inside r but a dark disc's light lives in
-    the corona ring (see quality.measure_quality / CORONA_FACTOR).
+    Shared by both branches of mesure_frame -- the single-regime path (one
+    already-chosen candidate) and the dual path (both candidates, see
+    mesure_frame) -- so the two can never drift apart on how a candidate is
+    turned into measures.
 
     dark_radius is the radius the DARK regime works at, and a dual-vote
     sequence needs its own: the bright vote fits the solar limb, the dark
@@ -135,6 +136,44 @@ def mesure_frame(travail):
     mesure que la partie eclairee au-dela de la moitie du p99 du disque
     (voir photometry.measure_photometry), et l'interieur d'un disque sombre
     n'en contient rien a l'un ou l'autre rayon.
+    """
+    cx, cy, conf = candidate
+    is_dark = regime == "dark"
+    regime_radius = dark_radius if is_dark else rayon
+    capture_radius = regime_radius * (CORONA_FACTOR if is_dark else 1.0)
+    return {
+        "cx": cx, "cy": cy, "conf": conf,
+        "q": measure_quality(gray, cx, cy, regime_radius, regime=regime),
+        "m": masse_captee(gray, cx, cy, capture_radius,
+                          seuil_lumiere=params["light_threshold"]),
+        "p": measure_photometry(rgb, cx, cy, rayon),
+    }
+
+
+def mesure_frame(travail):
+    """Mesures d'une frame, passe 1. travail = (rgb, rayon, dark_radius, params).
+
+    params: resolved presets.analysis_params dict (vote regime and light
+    threshold).
+
+    A DUAL profile ("vote": "dual") returns BOTH regimes IN FULL -- a
+    "candidates" dict with "bright" and "dark", each already carrying its
+    own cx/cy/conf/q(uality)/m(asse_captee)/p(hotometry) -- instead of a
+    single winner. Picking a winner per frame (the historic argmax, still
+    what locate_center_regime's own dual branch does) flaps between two
+    DIFFERENT bodies that can BOTH legitimately lock during a partial
+    eclipse: bright on the solar crescent, dark on the covering lunar disc,
+    physically offset centres, not a measurement error on either side (see
+    locate.locate_center_regime for the measured degeneracy). Measured on
+    m2-res_852p: dozens of 10-24 px jumps and two 166-168 px jumps among the
+    first 14 kept frames of the sequence. The choice is instead made by
+    pipeline.analyze's hysteresis over the ORDERED sequence of confidences
+    (see pipeline.RegimeChooser) -- something no single frame, computed in
+    an arbitrary worker process, can do for itself.
+
+    Non-dual profiles are UNCHANGED: one regime already chosen by
+    locate_center_regime, one computation, same cost and same return shape
+    (cx/cy/conf/regime/q/m/p at top level) as before this fix.
 
     Rend les valeurs BRUTES : c'est l'appelant qui les met en forme pour le
     cache (voir pipeline._ou_none). La fonction reste ainsi purement
@@ -143,18 +182,22 @@ def mesure_frame(travail):
     """
     rgb, rayon, dark_radius, params = travail
     gray = rgb.astype(np.float32).mean(axis=2)
+    if params["vote"] == "dual":
+        bright, dark = locate_both_regimes(gray, rayon, dark_radius)
+        return {
+            "candidates": {
+                "bright": _mesure_regime(gray, rgb, rayon, dark_radius,
+                                         params, bright, "bright"),
+                "dark": _mesure_regime(gray, rgb, rayon, dark_radius,
+                                       params, dark, "dark"),
+            },
+        }
     (cx, cy, conf), regime = locate_center_regime(gray, rayon, params["vote"],
                                                   dark_radius)
-    is_dark = regime == "dark"
-    regime_radius = dark_radius if is_dark else rayon
-    capture_radius = regime_radius * (CORONA_FACTOR if is_dark else 1.0)
-    return {
-        "cx": cx, "cy": cy, "conf": conf, "regime": regime,
-        "q": measure_quality(gray, cx, cy, regime_radius, regime=regime),
-        "m": masse_captee(gray, cx, cy, capture_radius,
-                          seuil_lumiere=params["light_threshold"]),
-        "p": measure_photometry(rgb, cx, cy, rayon),
-    }
+    mesure = _mesure_regime(gray, rgb, rayon, dark_radius, params,
+                            (cx, cy, conf), regime)
+    mesure["regime"] = regime
+    return mesure
 
 
 def rend_frame(travail):

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from eclipse.locate import (
     sobel, lit_mask, estimate_radius, locate_center, locate_center_regime,
-    scan_radius,
+    locate_both_regimes, scan_radius,
 )
 from tests.synth import make_frame, make_moon_frame, make_totality_frame
 
@@ -420,3 +420,36 @@ def test_a_bright_vote_ignores_r_dark():
                                 r=55.0, phase=0.5))
     assert locate_center_regime(croissant, 55.0, vote="bright", r_dark=63.0) \
         == locate_center_regime(croissant, 55.0, vote="bright")
+
+
+def test_locate_both_regimes_matches_the_single_regime_votes():
+    """Both candidates must be exactly what a single-regime call at the
+    same radius would produce: this is the function pipeline.analyze needs
+    to pick a winner itself (hysteresis) instead of the per-frame argmax
+    that locate_center_regime's own dual branch still does for its other
+    callers."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    bright, dark = locate_both_regimes(tot, 55.0, r_dark=63.0)
+    assert bright == locate_center_regime(tot, 55.0, vote="bright")[0]
+    assert dark == locate_center_regime(tot, 55.0, vote="dark", r_dark=63.0)[0]
+
+
+def test_locate_both_regimes_none_repeats_r():
+    """r_dark=None must repeat r, exactly like locate_center_regime."""
+    croissant = gris(make_frame(w=200, h=200, center=(100.0, 100.0),
+                                r=55.0, phase=0.5))
+    assert locate_both_regimes(croissant, 55.0) == \
+        locate_both_regimes(croissant, 55.0, r_dark=55.0)
+
+
+def test_locate_center_regime_dual_still_picks_the_stronger_peak():
+    """The refactor (locate_center_regime's dual branch now calls
+    locate_both_regimes) must not change its own, still-argmax, contract:
+    every other caller of vote="dual" is unaffected by this change."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    bright, dark = locate_both_regimes(tot, 55.0, r_dark=63.0)
+    winner, regime = locate_center_regime(tot, 55.0, vote="dual", r_dark=63.0)
+    assert (winner, regime) == ((dark, "dark") if dark[2] > bright[2]
+                                else (bright, "bright"))

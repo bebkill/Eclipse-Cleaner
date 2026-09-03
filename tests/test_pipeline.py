@@ -6,6 +6,7 @@ import pytest
 from eclipse.io import FrameWriter, FrameReader, probe
 from eclipse.pipeline import (SCHEMA_VERSION, analyze, render, charger_cache, main,
                               SEUIL_MASQUE_DEFAUT, TOLERANCE_BORD_DEFAUT,
+                              SWITCH_FRAMES, SWITCH_RATIO, RegimeChooser,
                               tailles_defaut)
 from eclipse.presets import analysis_params
 from tests.synth import make_frame, make_moon_frame, make_totality_frame
@@ -80,6 +81,77 @@ def test_seuil_masque_par_defaut_est_0_80():
     assert SEUIL_MASQUE_DEFAUT == 0.80
 
 
+def test_regime_chooser_starts_bright():
+    """The Sun is the subject whenever it is visible; the Moon only takes
+    the centre during totality (see RegimeChooser's docstring). A brand
+    new chooser must therefore answer "bright" even on its very first
+    call, whatever the confidences say -- the switch only fires after
+    SWITCH_FRAMES consecutive qualifying frames."""
+    chooser = RegimeChooser()
+    assert chooser.choose(0.05, 0.9) == "bright"
+
+
+def test_regime_chooser_ignores_isolated_flapping():
+    """The diagnosed defect in synthetic form: a partial eclipse where the
+    dark vote occasionally out-confidences the bright one for a frame or
+    two -- both are real locks, on two different bodies -- must NOT flip
+    the chosen regime, since the spikes never last SWITCH_FRAMES frames in
+    a row."""
+    chooser = RegimeChooser()
+    confs = [(0.42, 0.10), (0.38, 0.55), (0.40, 0.50), (0.44, 0.09),
+             (0.41, 0.60), (0.39, 0.52), (0.43, 0.08)]
+    regimes = [chooser.choose(b, d) for b, d in confs]
+    assert regimes == ["bright"] * len(confs)
+
+
+def test_regime_chooser_switches_bright_to_dark_after_switch_frames():
+    """A genuine transition (totality) must switch, but only once the
+    dark vote has been the stronger one, by SWITCH_RATIO, for
+    SWITCH_FRAMES consecutive frames -- not on the first qualifying frame,
+    which would be just as flap-prone as the old per-frame argmax."""
+    chooser = RegimeChooser()
+    for i in range(SWITCH_FRAMES - 1):
+        assert chooser.choose(0.05, 0.9) == "bright", f"switched early at {i}"
+    assert chooser.choose(0.05, 0.9) == "dark"
+
+
+def test_regime_chooser_switches_dark_to_bright_after_switch_frames():
+    """The reverse transition (end of totality), symmetrically delayed by
+    SWITCH_FRAMES."""
+    chooser = RegimeChooser()
+    for _ in range(SWITCH_FRAMES):
+        chooser.choose(0.05, 0.9)          # drive it to "dark" first
+    for i in range(SWITCH_FRAMES - 1):
+        assert chooser.choose(0.9, 0.05) == "dark", f"switched early at {i}"
+    assert chooser.choose(0.9, 0.05) == "bright"
+
+
+def test_regime_chooser_streak_resets_on_a_non_qualifying_frame():
+    """SWITCH_FRAMES must be CONSECUTIVE: one frame that breaks the streak
+    must restart the count, or a single stray strong frame amid noise
+    would still eventually flip the regime exactly like the old argmax."""
+    chooser = RegimeChooser()
+    for _ in range(SWITCH_FRAMES - 1):
+        chooser.choose(0.05, 0.9)          # almost switches...
+    assert chooser.choose(0.9, 0.05) == "bright"   # ...but the streak breaks
+    for i in range(SWITCH_FRAMES - 1):
+        assert chooser.choose(0.05, 0.9) == "bright", f"switched early at {i}"
+    assert chooser.choose(0.05, 0.9) == "dark"
+
+
+def test_regime_chooser_ties_favor_bright():
+    """Asymmetric by design: bright wins ties. From "dark", a run of equal
+    confidences must switch back to "bright" -- the Sun is the default
+    subject whenever the two votes disagree by nothing."""
+    chooser = RegimeChooser()
+    for _ in range(SWITCH_FRAMES):
+        chooser.choose(0.05, 0.9)          # drive it to "dark"
+    regime = None
+    for _ in range(SWITCH_FRAMES):
+        regime = chooser.choose(0.5, 0.5)
+    assert regime == "bright"
+
+
 def test_analyze_ecrit_un_cache_complet(video_synthetique, tmp_path):
     cache = str(tmp_path / "a.json")
     donnees = analyze(video_synthetique, cache, scale=1.0)
@@ -98,7 +170,7 @@ def test_cache_carries_the_preset(video_synthetique, tmp_path):
     cache = str(tmp_path / "a.json")
     analyze(video_synthetique, cache, scale=1.0, preset="custom")
     d = json.load(open(cache, encoding="utf-8"))
-    assert d["schema"] == 7 == SCHEMA_VERSION
+    assert d["schema"] == 8 == SCHEMA_VERSION
     assert d["preset"] == "custom"
     assert d["analysis_params"] == analysis_params("custom")
     assert all(f["regime"] in ("bright", "dark") for f in d["frames"])
@@ -1159,7 +1231,9 @@ def test_un_cache_d_avant_le_correctif_de_mesure_est_refuse(video_synthetique, t
     les mesures quand le profil d'eclipse a choisi les strategies de la
     passe 1 (schema 6), puis radius_dark et les mesures du regime sombre
     quand le vote dual a cesse de voter les deux regimes au meme rayon
-    (schema 7).
+    (schema 7), puis le choix de regime lui-meme quand l'argmax par frame a
+    cede la place a une hysteresis biaisee sur la sequence ordonnee
+    (schema 8, voir RegimeChooser).
 
     charger_cache ne valide que le schema et la signature de la SOURCE ;
     celle-ci n'ayant pas bouge, un cache d'avant le correctif serait relu en
@@ -1171,8 +1245,8 @@ def test_un_cache_d_avant_le_correctif_de_mesure_est_refuse(video_synthetique, t
     analyze(video_synthetique, cache, scale=1.0)
     with open(cache) as f:
         donnees = json.load(f)
-    assert donnees["schema"] == 7, "un cache neuf porte la version courante"
-    donnees["schema"] = 6                      # tel qu'ecrit avant le correctif
+    assert donnees["schema"] == 8, "un cache neuf porte la version courante"
+    donnees["schema"] = 7                      # tel qu'ecrit avant le correctif
     with open(cache, "w") as f:
         json.dump(donnees, f)
     assert charger_cache(cache, video_synthetique) is None

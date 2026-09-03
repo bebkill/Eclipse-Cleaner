@@ -301,9 +301,32 @@ def locate_center_regime(gray, r, vote="dual", r_dark=None):
         return _vote_center(gray, r_dark, -1.0), "dark"
     if vote != "dual":
         raise ValueError(f"Regime de vote inconnu : {vote!r}")
-    bright = _vote_center(gray, r, +1.0)
-    dark = _vote_center(gray, r_dark, -1.0)
+    bright, dark = locate_both_regimes(gray, r, r_dark)
     return (bright, "bright") if bright[2] >= dark[2] else (dark, "dark")
+
+
+def locate_both_regimes(gray, r, r_dark=None):
+    """((cx, cy, conf) bright, (cx, cy, conf) dark) -- both candidates, no
+    winner picked.
+
+    Extracted from locate_center_regime's dual branch, which still picks
+    the per-frame argmax for every caller that wants a single answer. This
+    is for the one caller that must NOT: pipeline.analyze's dual-vote
+    collection, which found the per-frame argmax flapping between two
+    DIFFERENT, legitimately-locked bodies during a partial eclipse -- the
+    bright vote on the solar crescent, the dark vote on the covering lunar
+    disc, physically offset centres, not a measurement error on either
+    side (see this module's own docstring for the measured degeneracy that
+    makes the dark vote need its own radius in the first place). Choosing
+    between them is instead done with hysteresis over the ORDERED sequence
+    of confidences (see pipeline.RegimeChooser), which no single frame can
+    do for itself -- hence returning both instead of a winner here.
+
+    r_dark: the radius the dark regime votes at; None repeats r, matching
+    locate_center_regime.
+    """
+    r_dark = r if r_dark is None else r_dark
+    return _vote_center(gray, r, +1.0), _vote_center(gray, r_dark, -1.0)
 
 
 def _barycentre(acc, py, px, pad):

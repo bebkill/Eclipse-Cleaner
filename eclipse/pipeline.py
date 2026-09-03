@@ -80,7 +80,24 @@ from .viewer import sert
 # and the SOURCE signature, so a v6 cache re-read silently would keep the
 # 24-source-px horizontal shake that this version removes. Non-dual
 # caches merely gain the field, radius_dark repeating radius.
-SCHEMA_VERSION = 7
+#
+# Version 8: the dual-vote regime choice is no longer a per-frame argmax
+# but a bright-biased HYSTERESIS over the ordered sequence of confidences
+# (see RegimeChooser) -- the per-frame argmax was flapping between two
+# DIFFERENT bodies that both legitimately lock during a partial eclipse
+# (bright on the solar crescent, dark on the covering lunar disc,
+# physically offset centres), measured on m2-res_852p as dozens of
+# 10-24 px jumps and two 166-168 px jumps among the first 14 kept frames.
+# cx/cy/conf/regime and the fields sized on them (disk_p90,
+# limb_sharpness, flare_ratio, masse_captee) all change VALUE on a dual
+# cache wherever the old argmax and the new hysteresis disagree -- same
+# trap as versions 3-7: charger_cache validates only the schema and the
+# SOURCE signature, so a v7 cache re-read silently would keep the
+# start-of-video jumping this version removes. Frames also gain
+# "conf_autre", the confidence of the regime NOT chosen (null outside
+# dual profiles) -- kept for future diagnostics, not read by render or the
+# viewer today.
+SCHEMA_VERSION = 8
 FRAMES_ECHANTILLON_RAYON = 300
 
 #: Frames sampled for the DARK-regime radius scan of a dual-vote profile,
@@ -332,6 +349,96 @@ def _verifie_preset(cache_path, source, donnees, preset, seuil_lumiere=None):
                 f"--seuil-lumiere {seuil_lumiere:g}")
 
 
+#: Confidence ratio a bright-locked sequence's dark vote must clear, and
+#: the number of CONSECUTIVE frames it must clear it for, before
+#: RegimeChooser accepts a switch away from "bright" (and, symmetrically,
+#: the number of consecutive bright-stronger frames before switching back).
+#:
+#: Calibrated on m2-res_852p (--preset sun): the per-frame argmax that
+#: RegimeChooser replaces switched 25 times over the whole video (all in
+#: the partial phases), because BOTH regimes lock legitimately on TWO
+#: DIFFERENT bodies -- bright on the solar crescent, dark on the covering
+#: lunar disc, physically offset centres (see locate.locate_center_regime).
+#: SWITCH_RATIO=2.0, SWITCH_FRAMES=5 collapse that to a clean
+#: bright/dark/bright sequence -- measured blocks 0-300 / 301-1193 /
+#: 1194-1283 -- with a total of 2 switches, comfortably under the ≤4 gate:
+#: those are the only two places the dark vote is EVER 2x the bright one,
+#: or vice versa, for 5 frames running. The switch lands 15-20 frames after
+#: the approximate visual contact points (~284, ~1189): the crescent still
+#: carries a non-trivial bright confidence for a few tenths of a second
+#: past geometric contact, which is exactly the kind of single-frame noise
+#: this hysteresis is built to outlast rather than react to.
+#:
+#: Swept on this video's real confidence sequence: every SWITCH_RATIO in
+#: 1.5-3.0 gives the same 2 switches at SWITCH_FRAMES=5 or 8, block
+#: boundaries moving by at most 3 frames (298-303) across that whole
+#: range -- the choice is not sensitive to the exact ratio. SWITCH_FRAMES
+#: is what matters: at 3 frames, ratios 1.5 and 2.0 both regress to 6
+#: switches (two brief false starts near each contact), so 5 is the
+#: smallest value that stays robust across the ratio range, not merely
+#: the suggested starting point.
+SWITCH_RATIO = 2.0
+SWITCH_FRAMES = 5
+
+
+class RegimeChooser:
+    """Stateful, bright-biased hysteresis over an ORDERED sequence of dual
+    vote confidences -- see pipeline.analyze's collection loop, the only
+    caller: it receives parallele.mesure_frame's results IN ORDER (the
+    enumerate over `mesures`), which is what makes a STATEFUL choice
+    possible at all.
+
+    The physics this encodes: the Sun is the subject whenever it is
+    visible -- a thin crescent is still the Sun -- and the Moon only takes
+    the centre during totality, when the Sun is entirely hidden. A
+    per-frame independent argmax over (conf_bright, conf_dark) does not
+    know this: during the partial phases BOTH regimes can lock, legitimately,
+    on two DIFFERENT bodies (bright on the solar crescent, dark on the
+    covering lunar disc, physically offset centres -- see
+    locate.locate_center_regime for the measured degeneracy that first
+    exposed this), and the argmax flips between them frame to frame.
+
+    The rule: start "bright". Switch bright -> dark only once conf_dark has
+    exceeded SWITCH_RATIO * conf_bright for SWITCH_FRAMES CONSECUTIVE
+    frames; switch dark -> bright once conf_bright has been at least
+    conf_dark (bright wins ties, asymmetric with the other direction) for
+    SWITCH_FRAMES consecutive frames. A single anomalous frame, however
+    strong, cannot flip the choice -- it must hold for the entire streak.
+
+    A pending switch (streak running but not yet SWITCH_FRAMES long) is
+    NOT retroactive: frames already returned while the streak was building
+    keep the OLD regime. This is deliberate, not an oversight -- rewriting
+    already-cached frames would need a second pass, and a lag of at most
+    SWITCH_FRAMES frames at a genuine transition (a fraction of a second of
+    video) is invisible next to the flapping it replaces.
+    """
+
+    def __init__(self, switch_ratio=SWITCH_RATIO, switch_frames=SWITCH_FRAMES):
+        self._ratio = switch_ratio
+        self._frames = switch_frames
+        self._regime = "bright"
+        self._streak = 0
+
+    def choose(self, conf_bright, conf_dark):
+        """Regime ("bright" or "dark") for this frame; advances the state.
+
+        Must be called exactly once per frame, in video order: the streak
+        it maintains has no meaning otherwise.
+        """
+        if self._regime == "bright":
+            qualifies = conf_dark > self._ratio * conf_bright
+        else:
+            qualifies = conf_bright >= conf_dark   # bright wins ties
+        if qualifies:
+            self._streak += 1
+            if self._streak >= self._frames:
+                self._regime = "dark" if self._regime == "bright" else "bright"
+                self._streak = 0
+        else:
+            self._streak = 0
+        return self._regime
+
+
 def _dark_regime_radius(source, lw, lh, info, bright_radius):
     """Radius of the DARK disc, scanned over the whole video.
 
@@ -445,6 +552,12 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
         dark_radius = r
 
     frames = []
+    # STATEFUL, and built once for the whole analysis: the hysteresis it
+    # runs needs the ORDERED sequence of confidences, frame after frame
+    # (see RegimeChooser). It is a no-op for non-dual profiles below --
+    # mesure_frame never returns "candidates" for them, so .choose() is
+    # simply never called.
+    choisisseur = RegimeChooser()
     # closing() libere le pool des que le with est quitte, y compris par une
     # exception : sans lui, une trace retenue garde vivante la frame d'analyze,
     # donc le generateur et son pool avec elle.
@@ -454,21 +567,35 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
              nb)) as mesures:
         # Le parent decode et distribue ; les travailleurs calculent. Les
         # resultats reviennent dans l'ordre des frames, ce qui rend le cache
-        # identique a celui du chemin sequentiel.
+        # identique a celui du chemin sequentiel -- et c'est aussi ce qui
+        # rend la hysteresis du choix de regime possible : elle ne connait
+        # que l'ordre video.
         for n, mes in enumerate(mesures):
-            q, p = mes["q"], mes["p"]
+            candidats = mes.get("candidates")
+            if candidats is not None:
+                cb, cd = candidats["bright"]["conf"], candidats["dark"]["conf"]
+                regime = choisisseur.choose(cb, cd)
+                choisi = candidats[regime]
+                conf_autre = candidats["dark" if regime == "bright"
+                                       else "bright"]["conf"]
+            else:
+                choisi, regime, conf_autre = mes, mes["regime"], None
+            q, p = choisi["q"], choisi["p"]
             frames.append({
                 "n": n,
-                "cx": None if not np.isfinite(mes["cx"]) else float(mes["cx"]),
-                "cy": None if not np.isfinite(mes["cy"]) else float(mes["cy"]),
-                "conf": float(mes["conf"]),
-                "regime": mes["regime"],
+                "cx": (None if not np.isfinite(choisi["cx"])
+                      else float(choisi["cx"])),
+                "cy": (None if not np.isfinite(choisi["cy"])
+                      else float(choisi["cy"])),
+                "conf": float(choisi["conf"]),
+                "regime": regime,
                 "disk_p90": _ou_none(q["disk_p90"]),
                 "limb_sharpness": _ou_none(q["limb_sharpness"]),
                 "flare_ratio": _ou_none(q["flare_ratio"]),
-                "masse_captee": _ou_none(mes["m"]),
+                "masse_captee": _ou_none(choisi["m"]),
                 "level": _ou_none(p["level"]),
                 "wb": [_ou_none(v) for v in p["wb"]],
+                "conf_autre": _ou_none(conf_autre),
             })
             if progression is not None:
                 progression(n + 1)
