@@ -178,6 +178,45 @@ def measure_quality(gray, cx, cy, r, regime="bright"):
 #: d'exposition de la sequence (filtre solaire puis prise de vue directe).
 SEUIL_LUMIERE = 0.35
 
+#: Flat-frame floor for masse_captee's gray std, below which the frame is
+#: taken to carry no exploitable structure at all.
+#:
+#: Diagnosed on m2-res_852p (a total solar eclipse, preset sun): an
+#: exposure catastrophe around frames 264-285 leaves some frames near-black
+#: with no real gradient (277/279: mean 0.11, max 3.7, std 0.365-0.368) and
+#: others uniformly blown out (280/281: mean/max 252.0, std 0.000 exactly).
+#: On either, EVERY position scores close to the same masse_captee value
+#: because there is no contrast left to tell a right center from a wrong
+#: one -- measured returning 1.000 for a center 165 analysis px from the
+#: true one, ahead of the correct center's own 0.865.
+#:
+#: The floor is calibrated DOWN from that 0.365-0.368 range, not up to it:
+#: the reference custom-preset video (2556 frames) has a legitimate frame
+#: (1495, a cloud-lit dusk sky, mean 0.04 max 1.7) at std 0.1285 with a
+#: real, useful masse_captee of 0.068 -- lower std than m2's own diagnosed
+#: garbage. A floor at or above 0.1285 would NaN that frame too and change
+#: the custom preset's measures, which the guard must not do (see
+#: test_masse_captee_frames_normales_inchangees and the byte-identity gate
+#: on the reference video). 0.05 sits well under every finite-masse frame
+#: found in that census, while still catching genuinely flat input.
+FLAT_STD_FLOOR = 0.05
+
+#: Lit-fraction cap for the saturated-uniform half of the same guard, and
+#: the slightly looser std ceiling it is allowed to fire under. A frame
+#: where the SEUIL_LUMIERE-relative "lit" mask already covers most of the
+#: image is trivially uniform, whatever position is tried -- but taken
+#: alone, a high lit fraction is not unusual on genuinely dim, low-contrast
+#: frames (the reference video's frame 2277 reads 100% lit at std 0.359,
+#: with a real, correctly-low masse_captee of 0.163): the cap only adds
+#: information once corroborated by near-flatness. SATURATED_STD_FLOOR
+#: stays under the same 0.1285 reference floor as FLAT_STD_FLOOR, with a
+#: margin, so it cannot reach frame 2277 (std 0.359) either -- it only
+#: widens the exact-flat case to frames a hair less than perfectly constant
+#: (quantization noise on an otherwise blown-out sensor, say), which
+#: FLAT_STD_FLOOR alone would miss.
+SATURATED_LIT_CAP = 0.60
+SATURATED_STD_FLOOR = 0.12
+
 
 def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     """Fraction de la lumiere de l'image contenue dans le disque (cx, cy, r).
@@ -204,8 +243,10 @@ def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     attrape donc un centre qui tombe sur autre chose, pas un centre decale
     de quelques dizaines de pixels.
 
-    Retourne NaN si le centre n'est pas fini ou si l'image n'a pas de lumiere
-    exploitable — a l'appelant de decider ce qu'il en fait.
+    Retourne NaN si le centre n'est pas fini, si l'image n'a pas de lumiere
+    exploitable, ou si elle n'a pas de structure du tout (voir
+    FLAT_STD_FLOOR / SATURATED_LIT_CAP) — a l'appelant de decider ce qu'il
+    en fait.
     """
     if not (np.isfinite(cx) and np.isfinite(cy)):
         return float("nan")
@@ -213,7 +254,17 @@ def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     pic = float(g.max())
     if pic <= 1e-6:
         return float("nan")
+    # No contrast, no position information: a flat frame (near-black with
+    # no gradient, or blown-out uniformly white) scores every candidate
+    # center almost the same, which is exactly the degeneracy that anchored
+    # a wrong trajectory on m2-res_852p (see FLAT_STD_FLOOR). Checked BEFORE
+    # any capture logic runs.
+    ecart = float(g.std())
+    if ecart < FLAT_STD_FLOOR:
+        return float("nan")
     lumiere = g > seuil_lumiere * pic
+    if ecart < SATURATED_STD_FLOOR and float(lumiere.mean()) > SATURATED_LIT_CAP:
+        return float("nan")
     masse = float(g[lumiere].sum())
     if masse <= 0.0:
         return float("nan")

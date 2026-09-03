@@ -222,6 +222,48 @@ def test_masse_captee_image_noire_ne_leve_pas():
     assert np.isnan(masse_captee(np.zeros((80, 80), np.float32), 40.0, 40.0, 20.0))
 
 
+def test_masse_captee_frame_plate_sombre_est_nan():
+    """A near-black frame with no real gradient (diagnosed on m2-res_852p,
+    frames 277/279: mean 0.11, max 3.7, std 0.365-0.368) has no exploitable
+    structure. Unlike the all-zero case above, the constant value here is
+    nonzero, so masse_captee's own pic <= 1e-6 early return does not fire:
+    the flatness guard is what catches it."""
+    g = np.full((80, 80), 2.0, dtype=np.float32)
+    assert np.isnan(masse_captee(g, 40.0, 40.0, 20.0))
+
+
+def test_masse_captee_frame_plate_blanche_saturee_est_nan():
+    """A blown-out, uniformly white frame (diagnosed on m2-res_852p, frames
+    280/281: mean 252.0, max 252.0, std 0.000 exactly) makes ANY circle
+    capture ~all the light regardless of where it is placed -- masse_captee
+    returned 1.000 for a center 165 px off the true one. No gradient means
+    no position information: the guard must return NaN rather than a
+    spuriously perfect score."""
+    g = np.full((80, 80), 252.0, dtype=np.float32)
+    assert np.isnan(masse_captee(g, 5.0, 5.0, 20.0))
+
+
+def test_masse_captee_frames_normales_inchangees():
+    """Regression pin: the flatness guard must not move a single bit on
+    ordinary structured frames (real sun disc, half-shadowed moon, totality
+    corona) -- these are far above the flat-frame floor calibrated against
+    the m2/reference censuses (see FLAT_STD_FLOOR)."""
+    img = gris(make_frame(w=300, h=300, center=(150.0, 150.0), r=50.0))
+    assert masse_captee(img, 150.0, 150.0, 50.0) == 0.9969744081536135
+
+    moon = make_moon_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                           umbra=0.5, umbra_level=0.15)
+    gmoon = moon.astype(np.float32).mean(axis=2)
+    assert masse_captee(gmoon, 100.0, 100.0, 50.0) == 0.9929349012769606
+    assert (masse_captee(gmoon, 100.0, 100.0, 50.0, seuil_lumiere=0.10)
+            == 0.9865866916126089)
+
+    tot = make_totality_frame(w=240, h=240, center=(120.0, 120.0), r=55.0,
+                              corona=0.5)
+    gtot = tot.astype(np.float32).mean(axis=2)
+    assert masse_captee(gtot, 120.0, 120.0, CORONA_FACTOR * 55.0) == 1.0
+
+
 def test_masse_captee_light_threshold_is_a_parameter():
     """At the default 0.35 x max, the umbral part of a half-shadowed moon
     does not count as light; at 0.10 it does, and a correct center then
