@@ -27,3 +27,13 @@ def test_sun_scans_the_radius_and_votes_both_regimes():
 def test_unknown_preset_is_refused():
     with pytest.raises(ValueError):
         analysis_params("mars")
+
+def test_sun_refuses_unlocked_votes_as_trajectory_anchors():
+    """Measured on m2-res_852p (frames 270-279): an unlocked vote anchors
+    a garbage center at conf 0.0040-0.0076, while the good frames around it
+    sit at conf >= 0.042 -- better than 5x clear. Scoped to sun rather than
+    universal: M2 showed a global 0.02 floor would wrongly flip 44 valid
+    frames on the reference video and 163 on Lunar-221924 to interpolated."""
+    assert sort_defaults("sun")["seuils"] == {"conf_ancre": 0.02}
+    assert sort_defaults("custom")["seuils"] == {}
+    assert sort_defaults("moon")["seuils"] == {"dark_abs": 5.0}

@@ -38,6 +38,12 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
                       else float(tolerance_bord))
     seuil_masque = (SEUIL_MASQUE_DEFAUT if seuil_masque is None
                     else float(seuil_masque))
+    # The merged thresholds classify() computes internally, resolved once
+    # here so mesure_ok (conf_ancre, below) and ilot_min (further down)
+    # read the exact same preset-plus-CLI-override values classify() sorts
+    # against.
+    s_merged = (dict(SEUILS_DEFAUT) if seuils is None
+               else dict(SEUILS_DEFAUT, **seuils))
 
     frames = donnees["frames"]
     conf = _colonne(frames, "conf", 0.0)
@@ -61,8 +67,17 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # decision humaine arrivait apres le calcul de la trajectoire.
     # Ce qui decide, c'est la coherence entre le centre et l'image : le masque
     # solaire capture-t-il la lumiere ? (voir quality.masse_captee)
+    #
+    # A vote that never locked has no position to offer, whatever
+    # masse_captee says about the mask it was handed: masse_captee asks
+    # "does this center explain the light", conf asks "did the vote find a
+    # peak at all". conf_ancre (see quality.SEUILS_DEFAUT) is 0.0 for every
+    # preset but sun (see presets.sort_defaults) -- there is no dedicated
+    # CLI flag for it, an operator reaches it only through a preset or an
+    # explicit --seuils override.
     capt = _colonne(frames, "masse_captee", 0.0)
-    mesure_ok = np.isfinite(cx) & (capt >= seuil_masque)
+    mesure_ok = (np.isfinite(cx) & (capt >= seuil_masque)
+                & (conf >= s_merged["conf_ancre"]))
 
     # kx/ky convertissent les coordonnees d'analyse en coordonnees SOURCE
     # pleine resolution — jamais en coordonnees de sortie, qui ne sont plus
@@ -112,8 +127,7 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # a montre que son amplitude ne predisait pas le jugement de l'oeil
     # (medianes identiques, 76,9 px, des deux cotes du choix), et le
     # planificateur borne les sauts par construction.
-    ilot_min = (dict(SEUILS_DEFAUT) if seuils is None
-                else dict(SEUILS_DEFAUT, **seuils))["ilot_min"]
+    ilot_min = s_merged["ilot_min"]
     verdicts = supprime_ilots(
         [h or v for v, h in zip(verdicts, hors)], ilot_min)
 

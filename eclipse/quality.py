@@ -22,6 +22,22 @@ SEUILS_DEFAUT = {
     "blur_rel": 0.40,
     "flare_rel": 3.0,      # multiple de la mediane locale de flare_ratio
     "conf_min": 0.02,      # confiance minimale du vote de Hough
+    # Anchor-confidence floor: whether a low-confidence vote may anchor the
+    # cropping TRAJECTORY (see verdicts.analyse_verdicts's mesure_ok), a
+    # question independent of conf_min above (which only drives the SORT
+    # verdict no_lock -- a blurry or unlocked frame still keeps its correct
+    # position there). Default 0.0 (off), so every preset but sun stays
+    # bit-for-bit unchanged in pass 2: measured on the reference custom
+    # video (2556 frames) and on Lunar-221924 (10548 frames), 44 and 163
+    # respectively of the currently-valid frames sit under 0.02 despite
+    # being correctly positioned -- their cx/cy track smoothly with their
+    # confident neighbors, not the garbage jump a genuinely unlocked vote
+    # produces. A universal floor would wrongly interpolate all of them.
+    # The failure this floor targets -- an unlocked vote anchoring a
+    # garbage center at masse_captee 1.0 -- is specific to the sun preset's
+    # exposure-catastrophe transitions (see presets.sort_defaults), so it
+    # ships scoped there instead of here.
+    "conf_ancre": 0.0,
     # Ecart maximal du niveau a sa mediane locale, en fraction. A 0,35 une
     # seule frame de la sequence reelle est ecartee (la 184 : niveau 36,3
     # contre 91,7 autour) ; a 0,25 il y en a neuf, a 0,15 onze, sans qu'aucun

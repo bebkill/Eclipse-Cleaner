@@ -217,3 +217,31 @@ def test_analyse_verdicts_passe_le_regime_a_classify():
     verdicts = analyse_verdicts(d, 1080, 1920)["verdicts"]
     zone = [i for i in range(260, 320) if d["frames"][i]["regime"] == "bright"]
     assert all(verdicts[i] is None for i in zone)
+
+
+def test_an_unlocked_vote_does_not_anchor_under_the_sun_preset():
+    """The sun preset's exposure-catastrophe transitions (measured on
+    m2-res_852p, frames 270-279) leave some frames with a fully-captured
+    mask (masse_captee 1.0) but a vote that never locked (conf 0.0040-
+    0.0076, against >= 0.042 for the good frames around them): the center
+    they report is garbage and must not anchor the trajectory."""
+    d = _cache(n=41)
+    d["preset"] = "sun"
+    d["frames"][20]["conf"] = 0.005
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 540.0) < 1.0       # interpolated from neighbors
+
+
+def test_the_same_low_confidence_row_still_anchors_under_custom():
+    """conf_ancre defaults to 0.0 everywhere but sun (see
+    quality.SEUILS_DEFAUT): M2 found 44 correctly-positioned frames on the
+    reference custom video (and 163 on Lunar-221924) sitting under 0.02
+    despite being legitimate measures, so a universal floor is wrong and
+    the same low-confidence row must keep anchoring on itself here."""
+    d = _cache(n=41)
+    d["preset"] = "custom"
+    d["frames"][20]["conf"] = 0.005
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 800.0) < 1.0       # still anchors on itself

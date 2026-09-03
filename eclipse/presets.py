@@ -79,10 +79,24 @@ _ANALYSIS_DEFAULTS = {
 #   1180. The whole partial phase enters the render instead of being dropped.
 #   Left at the knee rather than pushed higher: at 0.90 every frame scores
 #   1.000 and the measure stops discriminating at all.
+#
+#   seuils={"conf_ancre": 0.02}: an anchor-confidence floor for the cropping
+#   TRAJECTORY (see verdicts.analyse_verdicts and quality.SEUILS_DEFAUT),
+#   0.0 (off) everywhere else. Measured on m2-res_852p's exposure-
+#   catastrophe frames 270-279: an unlocked Hough vote anchors a garbage
+#   center (cx as far off as -38.9) at conf 0.0040-0.0076, while every good
+#   frame in the same stretch (264-269, 274-276, 284-286) sits at conf >=
+#   0.042 -- better than 5x clear of the worst garbage. 0.02 is the
+#   existing conf_min value (see quality.SEUILS_DEFAUT), sitting mid-gap.
+#   Scoped to sun rather than made universal because a global floor is
+#   measurably wrong: it would flip 44 legitimate, correctly-positioned
+#   frames on the reference custom video and 163 on Lunar-221924 from
+#   valid to interpolated (see quality.SEUILS_DEFAUT's conf_ancre comment).
 _PRESETS = {
     "custom": {},
     "sun": {"radius_mode": "scan", "vote": "dual",
-            "light_threshold": 0.70},
+            "light_threshold": 0.70,
+            "seuils": {"conf_ancre": 0.02}},
     "moon": {"lit_mode": "max", "radius_mode": "scan",
              "seuils": {"dark_abs": 5.0}},
     "planetary": {"lit_mode": "max", "radius_mode": "scan"},
