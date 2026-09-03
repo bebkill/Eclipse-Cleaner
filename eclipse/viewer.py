@@ -170,30 +170,29 @@ def _signature_analyse(donnees):
             "width": donnees.get("width"), "height": donnees.get("height")}
 
 
-#: Tolerance relative sur le rapport de la fenetre de recadrage, la MEME que
-#: le controle de pipeline.render : 0,5 % d'ellipticite, invisible a l'oeil.
-#: Elle ne peut pas etre nulle, les dimensions paires qu'exige yuv420p
-#: empechant de suivre le rapport exactement (voir pipeline.tailles_defaut,
-#: dont la recommandation elle-meme s'en ecarte de 0,43 % sur une petite
-#: source). Le viewer REFUSE la ou render() se contente d'avertir : ici la
-#: valeur vient d'un geste de souris, qu'il suffit de refaire.
+#: Relative tolerance on the crop window's aspect ratio, the SAME one
+#: pipeline.render checks: 0.5% of ellipticity, invisible to the eye. It
+#: cannot be zero, since the even dimensions yuv420p demands make an exact
+#: ratio unreachable (see pipeline.tailles_defaut, whose own recommendation
+#: is 0.43% off on a small source). The viewer REFUSES where render() merely
+#: warns: here the value comes from a mouse gesture, which costs nothing to
+#: make again.
 TOLERANCE_RAPPORT = 5e-3
 
 
 def _cadrage_vue(info, cadrage):
-    """La fenetre de recadrage telle que LA PAGE en a besoin, sans trajectoire.
+    """The crop window as THE PAGE needs it, minus the trajectory.
 
-    De quoi dessiner, sur la vignette centrale, le rectangle que le rendu va
-    reellement decouper : la taille en vigueur, si elle est encore celle que
-    le pipeline recommande, les dimensions de la source et celles de la
-    sortie (la page verrouille le rapport du rectangle sur celui de la
-    sortie, exactement comme render() le controle), et le depassement tolere
-    au-dela des bords (voir track.planifie_trajectoire, que la page rejoue
-    frame par frame).
+    Enough to draw, over the central thumbnail, the rectangle the render
+    will actually cut out: the size in force, whether it is still the one
+    the pipeline recommends, the source and output dimensions (the page
+    locks the rectangle's aspect on the output's, exactly as render()
+    checks it), and the overshoot tolerated beyond the edges (see
+    track.planifie_trajectoire, which the page replays frame by frame).
 
-    « auto » decrit la taille EN VIGUEUR, jamais l'absence de fichier : un
-    --taille qui vaut justement la recommandation se lit « auto », ce qui est
-    ce que le libelle doit dire. L'utilisateur juge une taille, pas une
+    "auto" describes the size IN FORCE, never the absence of a file: a
+    --taille that happens to equal the recommendation reads as "auto",
+    which is what the label must say. The user judges a size, not a
     provenance.
     """
     from .pipeline import DEPASSEMENT_BUTEE_DEFAUT, tailles_defaut
@@ -213,21 +212,21 @@ def _cadrage_vue(info, cadrage):
 
 
 def _taille_demandee(brut, vue):
-    """La taille de fenetre demandee, validee, ou None si elle est refusee.
+    """The requested window size, validated, or None when it is refused.
 
-    PAIRE, parce que yuv420p l'exige (voir pipeline.tailles_defaut) ; dans
-    les dimensions de la SOURCE, parce qu'une fenetre plus grande n'aurait
-    aucun pixel a montrer sur sa bordure ; et au rapport de la SORTIE, parce
-    que c'est ce rapport que l'agrandissement final restitue — s'en ecarter
-    etirerait le disque en ellipse.
+    EVEN, because yuv420p demands it (see pipeline.tailles_defaut); within
+    the SOURCE's dimensions, because a larger window would have no pixel to
+    show along its border; and at the OUTPUT's ratio, because that is the
+    ratio the final upscale restores -- departing from it would stretch the
+    disc into an ellipse.
 
-    Rend None plutot que de lever : l'appelant en fait un 400, et une taille
-    refusee est une requete qui n'a pas de sens, pas une panne.
+    Returns None rather than raising: the caller turns it into a 400, and a
+    refused size is a request that makes no sense, not a failure.
     """
     if not isinstance(brut, (list, tuple)) or len(brut) != 2:
         return None
-    # bool est un int en Python : l'exclure, sans quoi [true, true] passerait
-    # pour une fenetre de 1x1.
+    # bool is an int in Python: exclude it, or [true, true] would pass for a
+    # 1x1 window.
     if any(isinstance(v, bool) or not isinstance(v, int) for v in brut):
         return None
     w, h = int(brut[0]), int(brut[1])
@@ -292,9 +291,9 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
         # coming back to the cache's preset finds it intact.
         donnees = None
     nb_vignettes = compte(dossier_vignettes)
-    # Construite AVANT le retour anticipe, et partagee par les deux formes de
-    # l'etat : la taille de fenetre et sa provenance ne dependent pas de ce
-    # qui manque. Seule la trajectoire, ajoutee plus bas, exige l'analyse.
+    # Built BEFORE the early return, and shared by both shapes of the state:
+    # the window size and where it comes from do not depend on what is
+    # missing. Only the trajectory, added further down, needs the analysis.
     vue_cadrage = _cadrage_vue(info, cadrage)
 
     manque = []
@@ -322,12 +321,12 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
         "cache": donnees,
         "reglages": _reglages(seuils, tolerance_bord, seuil_masque, cadrage,
                               couleur),
-        # La fenetre de recadrage, pour la page. A COTE de reglages["cadrage"]
-        # et non a sa place : celui-la est la liste des options a transmettre
-        # au rendu (defauts NON materialises, voir Porteur.cadrage et
-        # test_without_anything_stored_or_asked_the_size_stays_absent), celle-ci
-        # est la geometrie resolue a afficher. Materialiser les defauts dans
-        # le premier ferait lire « a refaire » sur tout rendu anterieur.
+        # The crop window, for the page. BESIDE reglages["cadrage"] rather
+        # than inside it: that one is the list of options to hand to the
+        # render (defaults NOT materialised, see Porteur.cadrage and
+        # test_without_anything_stored_or_asked_the_size_stays_absent), this
+        # one is the resolved geometry to display. Materialising the defaults
+        # in the former would make every earlier render read as "a refaire".
         "cadrage": vue_cadrage,
         # The three values the page needs to show a profile AND explain it:
         # what is in force, what the cache on disk was measured with (None
@@ -344,14 +343,13 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
 
     resultat = analyse_verdicts(donnees, info["width"], info["height"],
                                 seuils, tolerance_bord, seuil_masque)
-    # La trajectoire du centre, en coordonnees SOURCE, telle que le rendu la
-    # consommera (voir pipeline.render, qui la passe a
-    # track.planifie_trajectoire). Elle n'existe qu'ici : la page en a besoin
-    # pour poser son rectangle a l'endroit ou la fenetre sera reellement
-    # placee, et non au milieu de la source. Arrondie au dixieme de pixel,
-    # parce que 2556 frames a quinze decimales font 80 Ko de JSON pour une
-    # precision que l'ecran ne montre pas -- float() explicite, np.float64
-    # n'etant pas serialisable.
+    # The center's trajectory, in SOURCE coordinates, exactly as the render
+    # will consume it (see pipeline.render, which hands it to
+    # track.planifie_trajectoire). The page needs it to put its rectangle
+    # where the window will REALLY be placed, and not in the middle of the
+    # source. Rounded to a tenth of a pixel: 2556 frames at fifteen decimals
+    # make 80 KB of JSON for a precision no screen shows -- float()
+    # explicitly, np.float64 not being serialisable.
     vue_cadrage["traj"] = [[round(float(x), 1), round(float(y), 1)]
                            for x, y in zip(resultat["traj_x"],
                                            resultat["traj_y"])]
@@ -425,8 +423,8 @@ def chemins_derives(source):
             "dossier_vignettes": os.path.join(dossier, "vignettes")}
 
 
-#: Le nom du fichier ou la page enregistre la taille de fenetre choisie a la
-#: souris, dans le dossier de travail de la source.
+#: Name of the file where the page records the window size chosen with the
+#: mouse, inside the source's work folder.
 NOM_CADRAGE = "cadrage.json"
 
 
@@ -448,8 +446,8 @@ def chemin_cadrage(source):
 def charge_cadrage(source):
     """The crop size stored for this source, as a (w, h) couple, or None.
 
-    Absent, unreadable, malformed: all three read as « rien d'enregistre »,
-    and the effective size then falls back to the command line's --taille
+    Absent, unreadable, malformed: all three read as "nothing stored", and
+    the effective size then falls back to the command line's --taille
     and, failing that, to pipeline.tailles_defaut. Raising here would let one
     bad byte in a derived file stop the viewer from OPENING a video whose
     review is perfectly intact -- the file is a convenience, the video is the
@@ -479,14 +477,19 @@ def charge_cadrage(source):
 def ecrit_cadrage(source, taille):
     """Records this crop size for this source. Creates the work folder.
 
-    Ecriture simple, sans remplacement atomique, contrairement au fichier de
-    decisions : ce fichier-ci porte DEUX ENTIERS que l'utilisateur refait en
-    un geste de souris, la ou une revue de plusieurs heures ne se refait pas.
+    Written beside, then moved into place with os.replace, the same
+    discipline as decisions.enregistrer: writing in place would leave a
+    TRUNCATED file if the process died mid-write, and charge_cadrage reads a
+    truncated file as "nothing stored" -- the resize would look like it had
+    silently reverted to automatic. Three lines to make the swap atomic, on
+    a path a mouse gesture reaches.
     """
     chemin = chemin_cadrage(source)
     os.makedirs(os.path.dirname(chemin), exist_ok=True)
-    with open(chemin, "w", encoding="utf-8") as f:
+    provisoire = chemin + ".tmp"
+    with open(provisoire, "w", encoding="utf-8") as f:
         json.dump({"taille": [int(taille[0]), int(taille[1])]}, f)
+    os.replace(provisoire, chemin)
 
 
 def efface_cadrage(source):
@@ -762,27 +765,27 @@ class Porteur:
         #: inscrits au descripteur (voir construit_etat) — qui doivent voir
         #: exactement le meme contenu.
         #:
-        #: TOUT SAUF LA TAILLE DE FENETRE, qui depend de la SOURCE : la page
-        #: peut la changer a la souris, et le choix est enregistre par source
-        #: (voir chemin_cadrage). _pose la resout donc a chaque source et
-        #: reconstruit self.cadrage a partir de cette base. Il n'y a toujours
-        #: qu'un seul dictionnaire lu, self.cadrage.
+        #: EVERYTHING EXCEPT THE WINDOW SIZE, which depends on the SOURCE:
+        #: the page can change it with the mouse, and the choice is stored
+        #: per source (see chemin_cadrage). _pose therefore resolves it for
+        #: every source and rebuilds self.cadrage from this base. There is
+        #: still only ONE dictionary anybody reads, self.cadrage.
         self._cadrage_base = {nom: valeur for nom, valeur in (
             ("taille_sortie", taille_sortie),
             ("interp_max", interp_max),
             ("interp_deplacement_max", interp_deplacement_max),
             ("depassement_butee", depassement_butee),
         ) if valeur is not None}
-        #: La taille de fenetre demandee EN LIGNE DE COMMANDE (--taille), ou
-        #: None. Tenue a part parce qu'elle n'est qu'un REPLI : le fichier
-        #: cadrage.json de la source, quand il existe, la remplace. Ordre de
-        #: precedence, resolu dans _taille_effective : fichier > ligne de
-        #: commande > defaut de pipeline.tailles_defaut (une ABSENCE, jamais
-        #: une valeur materialisee -- voir _cadrage_pour).
+        #: The window size asked for ON THE COMMAND LINE (--taille), or None.
+        #: Kept apart because it is only a FALLBACK: the source's own
+        #: cadrage.json replaces it whenever it exists. Order of precedence,
+        #: resolved in _cadrage_pour: stored file > command line > the
+        #: pipeline.tailles_defaut default -- and that last one is an
+        #: ABSENCE, never a materialised value.
         self.taille_cli = taille
-        #: Pose des maintenant pour que l'attribut existe meme si _pose leve
-        #: sur une source illisible ; _pose le remplace par le cadrage de la
-        #: source qu'il installe.
+        #: Set right away so the attribute exists even if _pose raises on an
+        #: unreadable source; _pose replaces it with the crop of the source
+        #: it actually installs.
         self.cadrage = dict(self._cadrage_base)
         #: Le fichier de decisions demande en ligne de commande. Retenu
         #: parce que change_source lui substitue un chemin DERIVE : le tri
@@ -814,14 +817,14 @@ class Porteur:
         self._pose(source, cache_path, decisions_path, dossier_vignettes)
 
     def _cadrage_pour(self, source):
-        """Les options de cadrage en vigueur pour CETTE source.
+        """The crop options in force for THIS source.
 
-        Le seul endroit ou la precedence de la taille de fenetre se decide :
-        le fichier de la source, sinon --taille, sinon RIEN. « Rien » est un
-        choix et non un oubli : render() detient son defaut
-        (pipeline.tailles_defaut) et le descripteur doit continuer
-        d'enregistrer une ABSENCE, faute de quoi tout rendu produit avant
-        cette fonctionnalite se lirait « a refaire » du jour au lendemain.
+        The one place where the window size's precedence is decided: the
+        source's stored file, failing that --taille, failing that NOTHING.
+        "Nothing" is a choice and not an oversight: render() owns its
+        default (pipeline.tailles_defaut) and the descriptor must go on
+        recording an ABSENCE, without which every render produced before
+        this feature would read as "a refaire" overnight.
         """
         taille = None if source is None else charge_cadrage(source)
         if taille is None:
@@ -891,12 +894,12 @@ class Porteur:
                 from .detect import classify_video
                 self._suggestions[source] = classify_video(source)["type"]
             suggested = self._suggestions[source]
-        # Dans une VARIABLE LOCALE, et affecte plus bas seulement : la taille
-        # de fenetre est relue sur le disque de la nouvelle source, et
-        # construit_etat peut encore refuser celle-ci (probe leve sur une
-        # source illisible). L'ecrire tout de suite laisserait le porteur avec
-        # le cadrage de la source refusee sur la source qu'il garde --
-        # exactement le panachage que cette methode existe pour eviter.
+        # In a LOCAL VARIABLE, assigned only further down: the window size is
+        # re-read from the NEW source's disk, and construit_etat can still
+        # refuse that source (probe raises on an unreadable one). Writing it
+        # straight away would leave the porteur carrying the refused source's
+        # crop on the source it keeps -- exactly the half-switched state this
+        # method exists to prevent.
         cadrage = self._cadrage_pour(source)
         etat = _etat_vide() if source is None else construit_etat(
             source, cache_path, decisions_path, dossier_vignettes,
@@ -931,11 +934,10 @@ class Porteur:
         self.cache_path = cache_path
         self.decisions_path = decisions_path
         self.dossier_vignettes = dossier_vignettes
-        # LE MEME dictionnaire que celui dont l'etat vient d'etre construit,
-        # et non un second appel a _cadrage_pour : les arguments de render
-        # (voir _travail_rendu) et les reglages du descripteur doivent voir
-        # exactement le meme contenu, y compris si le fichier bougeait entre
-        # les deux lectures.
+        # THE SAME dictionary the state was just built from, and not a second
+        # call to _cadrage_pour: render's arguments (see _travail_rendu) and
+        # the descriptor's reglages must see exactly the same content, even
+        # if the stored file moved between two reads.
         self.cadrage = cadrage
         self.etat = etat
 
@@ -1094,10 +1096,13 @@ def _corps_frames(etat):
                  # exactly where the profile matters, since it is what the
                  # analysis about to run will be measured with.
                  "preset": etat["preset"],
-                 # Sans trajectoire sur cette forme : elle vient de l'analyse,
-                 # qui est justement ce qui manque. La page n'a alors rien a
-                 # dessiner -- la pellicule elle-meme est cachee -- mais le
-                 # libelle du cadrage, lui, reste juste.
+                 # No trajectory on this shape: it comes from the analysis,
+                 # which is precisely what is missing. Nothing crop-related
+                 # is on screen either -- body.pas-pret hides #scene whole,
+                 # footer and overlay with it. Sent anyway so that ONE shape
+                 # of the response does not have to be special-cased on the
+                 # page: chargeFrames reads d.cadrage the same way on both,
+                 # and the label is already correct when the strip appears.
                  "cadrage": etat["cadrage"]}
         if avertissement:
             corps["avertissement"] = avertissement
@@ -1122,9 +1127,9 @@ def _corps_frames(etat):
              "couleur": etat["reglages"]["couleur"],
              "mesures_valides": etat["mesures_valides"],
              "preset": etat["preset"],
-             # Trajectoire comprise sur cette forme : c'est elle qui permet a
-             # la page de poser le rectangle de recadrage a l'endroit ou la
-             # fenetre du rendu se posera pour chaque frame.
+             # Trajectory included on this shape: it is what lets the page
+             # put the crop rectangle where the render's window will land for
+             # each frame.
              "cadrage": etat["cadrage"]}
     # Surface au client un fichier de decisions present mais refuse (schema
     # perime, source differente...) : sans ca l'utilisateur croit reviser
@@ -2204,6 +2209,13 @@ def fabrique_handler(porteur, moteur):
             POSITION -- it follows the disc, and always will (see
             track.planifie_trajectoire).
 
+            THE TWO TOGETHER ARE A REFUSAL, not a precedence rule. A body
+            carrying both says two contradictory things, and either reading
+            of it silently discards half of what was asked; whichever half
+            this route picked would be right for one caller and wrong for
+            the next. 400 sends the question back to the client that can
+            answer it.
+
             A running task is a REFUSAL, like /api/preset and unlike
             /api/couleur. A render that has already started holds its own
             copy of porteur.cadrage (see _travail_rendu) while the descriptor
@@ -2218,6 +2230,8 @@ def fabrique_handler(porteur, moteur):
             if etat["source"] is None:
                 return self._envoie(400, b"", "text/plain")
             if requete.get("auto") is True:
+                if requete.get("taille") is not None:
+                    return self._envoie(400, b"", "text/plain")
                 taille = None
             else:
                 taille = _taille_demandee(requete.get("taille"),
@@ -2400,12 +2414,12 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
     les ignorer etait sans consequence. Depuis qu'elle lance le rendu, les
     ignorer donnerait un rendu qui ne correspond pas a ce qui a ete demande.
 
-    taille est la seule des cinq que la PAGE peut changer (a la souris, sur
-    le cadre pose sur la vignette centrale : POST /api/cadrage). Le choix est
-    enregistre par source, dans son dossier de travail, et il gagne alors sur
-    --taille : c'est l'intention la plus recente, comme le profil choisi dans
-    la page gagne sur --preset. Le retour a l'automatique efface ce fichier et
-    rend donc la main a --taille, puis au defaut de pipeline.tailles_defaut.
+    taille is the only one of the five the PAGE can change (with the mouse,
+    on the frame drawn over the central thumbnail: POST /api/cadrage). The
+    choice is stored per source, in its work folder, and then wins over
+    --taille: it is the more recent intent, exactly as a profile chosen in
+    the page wins over --preset. Returning to automatic deletes that file and
+    so hands control back to --taille, then to pipeline.tailles_defaut.
 
     couleur, couleur_fenetre, couleur_amplitude : la stabilisation de
     balance, memes parametres que pipeline.render, transmis au Porteur pour

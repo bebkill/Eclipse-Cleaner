@@ -4057,6 +4057,21 @@ def test_post_cadrage_refuses_an_impossible_size(serveur, taille):
     assert code == 400
 
 
+def test_post_cadrage_refuses_auto_and_a_size_together(serveur):
+    """A body saying both things says two contradictory ones.
+
+    Either reading silently discards half of what was asked, and whichever
+    half the route picked would be right for one caller and wrong for the
+    next. The stored size must not move either way.
+    """
+    url, _, src = serveur
+    _requete("POST", url + "/api/cadrage", {"taille": [60, 100]})
+    code, _ = _requete("POST", url + "/api/cadrage",
+                       {"auto": True, "taille": [94, 156]})
+    assert code == 400
+    assert viewer.charge_cadrage(src) == (60, 100)
+
+
 def test_post_cadrage_during_a_task_is_refused(serveur_avec_moteur):
     """A refusal, like /api/preset: a render already started holds a copy of
     porteur.cadrage while the descriptor written at delivery reads the
