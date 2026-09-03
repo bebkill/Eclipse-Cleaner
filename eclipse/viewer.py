@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -481,15 +482,38 @@ def ecrit_cadrage(source, taille):
     discipline as decisions.enregistrer: writing in place would leave a
     TRUNCATED file if the process died mid-write, and charge_cadrage reads a
     truncated file as "nothing stored" -- the resize would look like it had
-    silently reverted to automatic. Three lines to make the swap atomic, on
-    a path a mouse gesture reaches.
+    silently reverted to automatic.
+
+    A UNIQUE temporary name, from tempfile.mkstemp, and not a deterministic
+    <chemin>.tmp. The server is a ThreadingHTTPServer: two POST /api/cadrage
+    landing together -- two tabs, or a double gesture -- would open, truncate
+    and interleave THE SAME scratch file before either os.replace, and the
+    winner would deliver a mixture of both bodies. That is exactly the torn
+    write this function exists to prevent, merely moved one file sideways.
+    mkstemp also creates the file exclusively, so nothing else can be
+    following that name.
+
+    The scratch file is removed on any failure: a crash between creation and
+    replacement would otherwise leave a .cadrage-*.tmp in the work folder for
+    good, and nothing ever cleans that folder.
     """
     chemin = chemin_cadrage(source)
-    os.makedirs(os.path.dirname(chemin), exist_ok=True)
-    provisoire = chemin + ".tmp"
-    with open(provisoire, "w", encoding="utf-8") as f:
-        json.dump({"taille": [int(taille[0]), int(taille[1])]}, f)
-    os.replace(provisoire, chemin)
+    dossier = os.path.dirname(os.path.abspath(chemin)) or "."
+    os.makedirs(dossier, exist_ok=True)
+    fd, provisoire = tempfile.mkstemp(prefix=".cadrage-", suffix=".tmp",
+                                      dir=dossier)
+    try:
+        # os.fdopen takes ownership of the descriptor: closing the wrapper
+        # closes it, and there is no second close to get wrong.
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"taille": [int(taille[0]), int(taille[1])]}, f)
+        os.replace(provisoire, chemin)
+    except BaseException:
+        try:
+            os.remove(provisoire)
+        except OSError:
+            pass
+        raise
 
 
 def efface_cadrage(source):

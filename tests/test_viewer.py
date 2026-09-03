@@ -4181,6 +4181,54 @@ def test_changing_source_re_reads_the_stored_crop_size(tmp_path):
     assert porteur.cadrage["taille"] == (60, 100)
 
 
+def test_each_cadrage_write_uses_its_own_temp_name(tmp_path, monkeypatch):
+    """A deterministic name would put the torn write back, one file sideways.
+
+    The server is threaded: two POST /api/cadrage landing together would
+    open, truncate and interleave THE SAME <chemin>.tmp before either
+    os.replace, and the winner would deliver a mixture of both bodies --
+    which charge_cadrage reads as "nothing stored", i.e. a silent revert to
+    automatic. Asserted on the NAMES rather than by racing two threads: the
+    race is real but not reproducible on demand, and a flaky test would say
+    nothing on the run that matters.
+    """
+    import tempfile as _tempfile
+
+    src = _cree_video(tmp_path)
+    os.makedirs(work_folder(src), exist_ok=True)
+    noms = []
+    vrai_mkstemp = _tempfile.mkstemp
+
+    def espion(*a, **kw):
+        fd, chemin = vrai_mkstemp(*a, **kw)
+        noms.append(chemin)
+        return fd, chemin
+
+    monkeypatch.setattr(viewer.tempfile, "mkstemp", espion)
+    viewer.ecrit_cadrage(src, (60, 100))
+    viewer.ecrit_cadrage(src, (94, 156))
+    assert len(noms) == 2 and noms[0] != noms[1], noms
+    assert viewer.charge_cadrage(src) == (94, 156)
+    # And nothing is left behind: no cleaner ever visits the work folder.
+    restes = [n for n in os.listdir(work_folder(src)) if n.endswith(".tmp")]
+    assert not restes, restes
+
+
+def test_a_failed_cadrage_write_leaves_no_scratch_file(tmp_path, monkeypatch):
+    """The scratch file must not outlive a failure: nothing cleans this
+    folder, so it would stay for good."""
+    src = _cree_video(tmp_path)
+    os.makedirs(work_folder(src), exist_ok=True)
+
+    def echoue(*a, **kw):
+        raise OSError("disque plein")
+
+    monkeypatch.setattr(viewer.json, "dump", echoue)
+    with pytest.raises(OSError):
+        viewer.ecrit_cadrage(src, (60, 100))
+    assert os.listdir(work_folder(src)) == []
+
+
 def test_an_unreadable_stored_crop_falls_back_instead_of_raising(tmp_path):
     """One bad byte in a derived file must not stop the viewer from opening
     a video whose review is intact: it reads as "nothing stored"."""
