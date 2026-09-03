@@ -116,14 +116,14 @@ def applique(fonction, travaux, processus, bloc=None):
 
 
 def mesure_frame(travail):
-    """Mesures d'une frame, passe 1. travail = (rgb, rayon, rayon_sombre, params).
+    """Mesures d'une frame, passe 1. travail = (rgb, rayon, dark_radius, params).
 
     params: resolved presets.analysis_params dict (vote regime and light
     threshold). The winning regime is returned so the cache can carry it:
     quality reads a bright disc inside r but a dark disc's light lives in
     the corona ring (see quality.measure_quality / CORONA_FACTOR).
 
-    rayon_sombre is the radius the DARK regime works at, and a dual-vote
+    dark_radius is the radius the DARK regime works at, and a dual-vote
     sequence needs its own: the bright vote fits the solar limb, the dark
     vote the larger lunar disc covering it (see
     locate.locate_center_regime for the measured degeneracy). It sizes
@@ -141,16 +141,16 @@ def mesure_frame(travail):
     calculatoire, ce qui la rend testable seule et remplacable par un backend
     accelere.
     """
-    rgb, rayon, rayon_sombre, params = travail
+    rgb, rayon, dark_radius, params = travail
     gray = rgb.astype(np.float32).mean(axis=2)
     (cx, cy, conf), regime = locate_center_regime(gray, rayon, params["vote"],
-                                                  rayon_sombre)
-    sombre = regime == "dark"
-    rayon_regime = rayon_sombre if sombre else rayon
-    capture_radius = rayon_regime * (CORONA_FACTOR if sombre else 1.0)
+                                                  dark_radius)
+    is_dark = regime == "dark"
+    regime_radius = dark_radius if is_dark else rayon
+    capture_radius = regime_radius * (CORONA_FACTOR if is_dark else 1.0)
     return {
         "cx": cx, "cy": cy, "conf": conf, "regime": regime,
-        "q": measure_quality(gray, cx, cy, rayon_regime, regime=regime),
+        "q": measure_quality(gray, cx, cy, regime_radius, regime=regime),
         "m": masse_captee(gray, cx, cy, capture_radius,
                           seuil_lumiere=params["light_threshold"]),
         "p": measure_photometry(rgb, cx, cy, rayon),

@@ -7,7 +7,8 @@ from eclipse.io import FrameReader
 from eclipse.locate import estimate_radius, locate_center, sobel
 from eclipse.quality import (CORONA_FACTOR, measure_quality, classify,
                               verdicts_hors_source,
-                              SEUILS_DEFAUT, masse_captee, SEUIL_LUMIERE)
+                              SEUILS_DEFAUT, masse_captee, SEUIL_LUMIERE,
+                              FLAT_STD_FLOOR, SATURATED_STD_FLOOR)
 from tests.synth import make_frame, make_moon_frame, make_totality_frame
 from tests.test_pipeline import SOURCE_REELLE
 
@@ -169,7 +170,7 @@ def test_les_seuils_sont_surchargeables():
     assert classify(p90, sharp, flare, conf, seuils)[310] == "too_dark"
 
 
-def test_classify_reference_par_regime_evite_les_faux_rejets_a_une_frontiere():
+def test_classify_per_regime_reference_avoids_false_rejections_at_a_boundary():
     """The vote regime flaps near a boundary (measured on m2-res_852p: 9
     switches between frames 250 and 299) right before settling into a long
     stable stretch of the OTHER, much sharper regime (its totality, median
@@ -196,11 +197,31 @@ def test_classify_reference_par_regime_evite_les_faux_rejets_a_une_frontiere():
     # (100) never changes: any rejection is a false one.
     zone = [i for i in range(260, 320) if regime[i] == "bright"]
     assert any(sans_regime[i] == "motion_blur" for i in zone), (
-        "le montage ne demontre pas la degradation attendue sans regime")
+        "setup does not demonstrate the expected degradation without regime "
+        "splitting")
     assert all(avec_regime[i] is None for i in zone)
 
 
-def test_classify_un_seul_regime_reste_identique_a_l_octet():
+def test_classify_a_lone_minority_regime_frame_falls_back_to_the_global_reference():
+    """A single spurious dark-regime frame in an otherwise all-bright
+    sequence: a subsequence of length 1 has no median but its own value,
+    so without a floor the frame would validate itself no matter how
+    blurry it is (measured: a lone frame at sharpness 1.0 against 100.0
+    everywhere else kept its own value as its reference and was never
+    flagged). Below MIN_REGIME_FRAMES the regime falls back to the GLOBAL
+    rolling reference, and the lone blurry frame is caught again."""
+    n = 1000
+    sharp = np.full(n, 100.0)
+    regime = np.array(["bright"] * n, dtype=object)
+    sharp[500] = 1.0
+    regime[500] = "dark"          # the ONLY dark-regime frame in the sequence
+    p90, flare, conf = np.full(n, 200.0), np.full(n, 0.05), np.full(n, 0.5)
+
+    verdicts = classify(p90, sharp, flare, conf, regime=regime)
+    assert verdicts[500] == "motion_blur"
+
+
+def test_classify_a_single_regime_stays_byte_identical():
     """A regime column present but constant (no dual-vote video, or a
     single-regime stretch) must not perturb anything: classify(regime=...)
     then equals classify() bit for bit."""
@@ -212,7 +233,7 @@ def test_classify_un_seul_regime_reste_identique_a_l_octet():
     assert avec == sans
 
 
-def test_classify_sans_colonne_regime_reste_identique_a_l_octet():
+def test_classify_without_a_regime_column_stays_byte_identical():
     """regime=None (the default, and every caller before this fix) must
     stay byte-identical: this is what keeps the custom preset's verdicts
     unchanged (see the byte-identity gate on the reference video)."""
@@ -275,28 +296,48 @@ def test_masse_captee_image_noire_ne_leve_pas():
     assert np.isnan(masse_captee(np.zeros((80, 80), np.float32), 40.0, 40.0, 20.0))
 
 
-def test_masse_captee_frame_plate_sombre_est_nan():
-    """A near-black frame with no real gradient (diagnosed on m2-res_852p,
-    frames 277/279: mean 0.11, max 3.7, std 0.365-0.368) has no exploitable
-    structure. Unlike the all-zero case above, the constant value here is
-    nonzero, so masse_captee's own pic <= 1e-6 early return does not fire:
-    the flatness guard is what catches it."""
+def test_masse_captee_uniform_flat_frame_is_nan():
+    """A synthetic uniform frame (constant, nonzero gray value) has no
+    exploitable structure: unlike the all-zero case above, the constant
+    value here is nonzero, so masse_captee's own pic <= 1e-6 early return
+    does not fire -- the flatness guard (FLAT_STD_FLOOR) is what catches
+    it. This does NOT reproduce the diagnosed m2-res_852p frames 277/279
+    (their std, 0.365-0.368, sits well ABOVE FLAT_STD_FLOOR: their sparse
+    hot pixels keep this guard from firing -- see FLAT_STD_FLOOR's own
+    comment for what the guard's real measured effect on m2 is)."""
     g = np.full((80, 80), 2.0, dtype=np.float32)
     assert np.isnan(masse_captee(g, 40.0, 40.0, 20.0))
 
 
-def test_masse_captee_frame_plate_blanche_saturee_est_nan():
-    """A blown-out, uniformly white frame (diagnosed on m2-res_852p, frames
-    280/281: mean 252.0, max 252.0, std 0.000 exactly) makes ANY circle
-    capture ~all the light regardless of where it is placed -- masse_captee
-    returned 1.000 for a center 165 px off the true one. No gradient means
-    no position information: the guard must return NaN rather than a
-    spuriously perfect score."""
+def test_masse_captee_uniform_saturated_frame_is_nan():
+    """A synthetic, exactly-uniform blown-out frame makes ANY circle
+    capture ~all the light regardless of where it is placed. No gradient
+    means no position information: the guard must return NaN rather than a
+    spuriously perfect score. This is caught by FLAT_STD_FLOOR itself (std
+    0.0), not by the SATURATED_LIT_CAP/SATURATED_STD_FLOOR branch -- see
+    test_masse_captee_isolates_the_saturated_branch for that one on its
+    own."""
     g = np.full((80, 80), 252.0, dtype=np.float32)
     assert np.isnan(masse_captee(g, 5.0, 5.0, 20.0))
 
 
-def test_masse_captee_frames_normales_inchangees():
+def test_masse_captee_isolates_the_saturated_branch():
+    """SATURATED_LIT_CAP / SATURATED_STD_FLOOR has not been observed to
+    fire on any real frame measured so far (see their comment): every
+    frame flat enough to trip it in the m2/reference censuses is also flat
+    enough to trip FLAT_STD_FLOOR first. This isolates the branch on its
+    own terms, pinned to the actual floors: std strictly between the two
+    (quantization noise on an otherwise saturated sensor), with a lit
+    fraction the cap catches."""
+    assert FLAT_STD_FLOOR < SATURATED_STD_FLOOR
+    std_cible = (FLAT_STD_FLOOR + SATURATED_STD_FLOOR) / 2.0
+    g = np.full((80, 80), 250.0, dtype=np.float32)
+    g[::2, :] += 2.0 * std_cible          # exact 50/50 split -> std == std_cible
+    assert abs(float(g.std()) - std_cible) < 1e-5    # float32 rounding
+    assert np.isnan(masse_captee(g, 40.0, 40.0, 20.0))
+
+
+def test_masse_captee_normal_frames_unchanged():
     """Regression pin: the flatness guard must not move a single bit on
     ordinary structured frames (real sun disc, half-shadowed moon, totality
     corona) -- these are far above the flat-frame floor calibrated against

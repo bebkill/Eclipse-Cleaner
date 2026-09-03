@@ -104,18 +104,19 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # les verdicts de classify() puis on relance le nettoyage d'ilots, qui
     # peut reveler de nouvelles plages trop courtes que classify() ne
     # pouvait pas voir sans connaitre ces rejets.
-    # UN RAYON PAR FRAME, celui du regime qu'elle a mesure. Un cache dual
-    # porte deux rayons — le limbe solaire et le disque lunaire, plus grand,
-    # qui le couvre (voir locate.locate_center_regime) — et la borne
-    # hors_source parle du DISQUE : la calculer sur le rayon clair pour une
-    # frame de totalite mesurerait le mauvais cercle. Hors dual les deux
-    # rayons sont egaux et le tableau est constant, donc la borne est celle
-    # d'avant, a l'octet. Un cache anterieur sans radius_dark, ou une frame
-    # sans regime, comptent pour clair.
-    rayon_clair = float(donnees["radius"])
-    rayon_sombre = float(donnees.get("radius_dark") or rayon_clair)
-    sombre = np.array([f.get("regime") == "dark" for f in frames], dtype=bool)
-    rayon_visible = np.where(sombre, rayon_sombre, rayon_clair) * kx + MARGE_HALO
+    # ONE RADIUS PER FRAME, that of the regime it measured. A dual cache
+    # carries two radii -- the solar limb and the larger lunar disc
+    # covering it (see locate.locate_center_regime) -- and the hors_source
+    # bound is about the DISC: computing it from the bright radius for a
+    # totality frame would measure the wrong circle. Outside dual both
+    # radii are equal and the array is constant, so the bound is the
+    # previous one, byte for byte. A prior cache without radius_dark, or a
+    # frame without a regime, count as bright.
+    bright_radius = float(donnees["radius"])
+    dark_radius = float(donnees.get("radius_dark") or bright_radius)
+    is_dark = np.array([f.get("regime") == "dark" for f in frames], dtype=bool)
+    rayon_visible = (np.where(is_dark, dark_radius, bright_radius) * kx
+                     + MARGE_HALO)
     hors = verdicts_hors_source(scx * kx, scy * ky, rayon_visible,
                                 src_w, src_h, tolerance_bord)
 

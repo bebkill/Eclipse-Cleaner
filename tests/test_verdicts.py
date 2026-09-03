@@ -194,13 +194,12 @@ def test_a_missing_regime_counts_as_bright():
     assert all(v is None for v in analyse_verdicts(d, 1080, 1920)["verdicts"])
 
 
-def test_analyse_verdicts_passe_le_regime_a_classify():
-    """La reference de nettete de classify() doit etre scindee par regime
-    (voir quality.classify), et analyse_verdicts est ce qui lui fournit la
-    colonne : sans elle, une frame claire normale prise dans un flottement
-    de regime pres d'un long regime sombre bien plus net est lue comme
-    floue -- exactement le defaut mesure sur m2-res_852p entre les frames
-    250 et 309."""
+def test_analyse_verdicts_passes_the_regime_to_classify():
+    """classify()'s sharpness reference must be split per regime (see
+    quality.classify), and analyse_verdicts is what supplies it that
+    column: without it, a normal bright frame caught in a regime flutter
+    near a long, much sharper dark regime reads as blurry -- exactly the
+    defect measured on m2-res_852p between frames 250 and 309."""
     n = 1000
     d = _cache(n=n)
     for f in d["frames"]:

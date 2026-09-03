@@ -197,39 +197,63 @@ SEUIL_LUMIERE = 0.35
 #: Flat-frame floor for masse_captee's gray std, below which the frame is
 #: taken to carry no exploitable structure at all.
 #:
-#: Diagnosed on m2-res_852p (a total solar eclipse, preset sun): an
-#: exposure catastrophe around frames 264-285 leaves some frames near-black
-#: with no real gradient (277/279: mean 0.11, max 3.7, std 0.365-0.368) and
-#: others uniformly blown out (280/281: mean/max 252.0, std 0.000 exactly).
-#: On either, EVERY position scores close to the same masse_captee value
-#: because there is no contrast left to tell a right center from a wrong
-#: one -- measured returning 1.000 for a center 165 analysis px from the
-#: true one, ahead of the correct center's own 0.865.
+#: Measured truth (review correction: the frames first suspected here were
+#: NOT what this guard actually catches). Diagnosed on m2-res_852p (a
+#: total solar eclipse, preset sun), this guard's one real, verified
+#: effect is frames 1180-1183: near-black with no real gradient (mean
+#: 0.001, max 3.3, std 0.0311-0.0318), yet locate_center still returns a
+#: FINITE center there (conf 0.0835, comfortably above conf_ancre) --
+#: every position scores close to the same masse_captee value because
+#: there is no contrast left to tell a right center from a wrong one.
+#: Without this guard that finite-but-baseless center anchors the
+#: trajectory roughly 200 analysis px from its confident neighbors (118/210
+#: just before, 94/155 just after).
 #:
-#: The floor is calibrated DOWN from that 0.365-0.368 range, not up to it:
-#: the reference custom-preset video (2556 frames) has a legitimate frame
-#: (1495, a cloud-lit dusk sky, mean 0.04 max 1.7) at std 0.1285 with a
-#: real, useful masse_captee of 0.068 -- lower std than m2's own diagnosed
-#: garbage. A floor at or above 0.1285 would NaN that frame too and change
-#: the custom preset's measures, which the guard must not do (see
-#: test_masse_captee_frames_normales_inchangees and the byte-identity gate
-#: on the reference video). 0.05 sits well under every finite-masse frame
-#: found in that census, while still catching genuinely flat input.
+#: The originally-suspected frames on the same video are NOT caught here:
+#: 277/279 (mean 0.11, max 3.7) measure std 0.365-0.368, well ABOVE this
+#: floor -- their sparse hot pixels on an otherwise near-black frame keep
+#: the std too high for a flatness guard to see. That garbage is instead
+#: excluded by the anchor-confidence floor (see presets.sort_defaults's
+#: conf_ancre): their vote never locks, conf 0.0040-0.0076. And 280-283
+#: (uniformly blown out, std 0.000 exactly) never reach this guard at all
+#: in the real pipeline: locate_center itself returns a non-finite center
+#: on them, so masse_captee's own isfinite(cx) check (above) returns NaN
+#: first -- this guard would ALSO catch them if it ran, but it is moot.
+#:
+#: The floor is calibrated DOWN from the 0.0311-0.0318 range it actually
+#: targets, not up to it: the reference custom-preset video (2556 frames)
+#: has a legitimate frame (1495, a cloud-lit dusk sky, mean 0.04 max 1.7)
+#: at std 0.1285 with a real, useful masse_captee of 0.068 -- well above
+#: the garbage this floor targets. A floor at or above 0.1285 would NaN
+#: that frame too and change the custom preset's measures, which the guard
+#: must not do (see test_masse_captee_normal_frames_unchanged and the
+#: byte-identity gate on the reference video). 0.05 sits well under every
+#: finite-masse frame found in that census, while still catching the
+#: genuinely flat 1180-1183 case (and anything flatter).
 FLAT_STD_FLOOR = 0.05
 
-#: Lit-fraction cap for the saturated-uniform half of the same guard, and
-#: the slightly looser std ceiling it is allowed to fire under. A frame
-#: where the SEUIL_LUMIERE-relative "lit" mask already covers most of the
-#: image is trivially uniform, whatever position is tried -- but taken
-#: alone, a high lit fraction is not unusual on genuinely dim, low-contrast
-#: frames (the reference video's frame 2277 reads 100% lit at std 0.359,
-#: with a real, correctly-low masse_captee of 0.163): the cap only adds
-#: information once corroborated by near-flatness. SATURATED_STD_FLOOR
+#: Lit-fraction cap for a saturated-but-not-perfectly-flat frame, and the
+#: slightly looser std ceiling it is allowed to fire under. A frame where
+#: the SEUIL_LUMIERE-relative "lit" mask already covers most of the image
+#: is trivially uniform, whatever position is tried -- but taken alone, a
+#: high lit fraction is not unusual on genuinely dim, low-contrast frames
+#: (the reference video's frame 2277 reads 100% lit at std 0.359, with a
+#: real, correctly-low masse_captee of 0.163): the cap only adds
+#: information once corroborated by near-flatness.
+#:
+#: Measured truth (review correction: this branch was not isolated by any
+#: test, and does not fire on any real frame found so far). Every frame
+#: flat enough to trip it (std < 0.12) in the m2 and reference censuses is
+#: ALSO flat enough to trip FLAT_STD_FLOOR first (std < 0.05) -- frames
+#: 280-283's std 0.000 is the closest real candidate, and FLAT_STD_FLOOR
+#: returns NaN before this line ever runs (see its own comment). This
+#: branch exists for the case FLAT_STD_FLOOR alone would miss: a saturated
+#: sensor with quantization noise (std strictly between the two floors,
+#: lit fraction still near 100%) rather than an exactly constant one.
+#: Isolated synthetically in test_masse_captee_isolates_the_saturated_branch,
+#: pinning both floors, since no real frame does it yet. SATURATED_STD_FLOOR
 #: stays under the same 0.1285 reference floor as FLAT_STD_FLOOR, with a
-#: margin, so it cannot reach frame 2277 (std 0.359) either -- it only
-#: widens the exact-flat case to frames a hair less than perfectly constant
-#: (quantization noise on an otherwise blown-out sensor, say), which
-#: FLAT_STD_FLOOR alone would miss.
+#: margin, so it cannot reach frame 2277 (std 0.359) either.
 SATURATED_LIT_CAP = 0.60
 SATURATED_STD_FLOOR = 0.12
 
@@ -275,11 +299,11 @@ def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     # center almost the same, which is exactly the degeneracy that anchored
     # a wrong trajectory on m2-res_852p (see FLAT_STD_FLOOR). Checked BEFORE
     # any capture logic runs.
-    ecart = float(g.std())
-    if ecart < FLAT_STD_FLOOR:
+    std_dev = float(g.std())
+    if std_dev < FLAT_STD_FLOOR:
         return float("nan")
     lumiere = g > seuil_lumiere * pic
-    if ecart < SATURATED_STD_FLOOR and float(lumiere.mean()) > SATURATED_LIT_CAP:
+    if std_dev < SATURATED_STD_FLOOR and float(lumiere.mean()) > SATURATED_LIT_CAP:
         return float("nan")
     masse = float(g[lumiere].sum())
     if masse <= 0.0:
@@ -292,41 +316,69 @@ def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     return float(g[lumiere & dedans].sum()) / masse
 
 
-def _fenetre_impaire(n, largeur):
-    """La regle de fenetre impaire de classify, factorisee : bornee a n,
-    toujours impaire, jamais nulle."""
+def _odd_window(n, largeur):
+    """The odd-window rule from classify, factored out: bounded to n,
+    always odd, never zero."""
     k = min(largeur, n if n % 2 == 1 else n - 1)
     return max(k if k % 2 == 1 else k - 1, 1)
 
 
-def _reference_par_regime(valeurs, largeur, regime):
-    """Reference locale (mediane glissante), scindee par regime de vote.
+#: Below this many frames, a regime's own subsequence is too short for its
+#: rolling median to measure anything: at length 1 the reference IS the
+#: value itself (a lone frame's own median is itself), so a rare regime
+#: with only a handful of frames would pass every relative criterion by
+#: construction, whatever its actual value. Measured: a single spurious
+#: dark-regime frame (sharpness 1.0 against 100.0 everywhere else) kept its
+#: own value as its reference and was never flagged motion_blur. Below
+#: this floor the regime falls back to the GLOBAL rolling reference
+#: instead of its own -- exactly what a cache without regime splitting
+#: already does for every frame. 15 is a fixed, deliberately generous
+#: floor: it costs nothing on the sequences this splitting targets (m2's
+#: two regimes run to hundreds of frames each) and only ever engages for a
+#: minority regime too thin to say anything about itself.
+MIN_REGIME_FRAMES = 15
 
-    regime absent, ou un seul regime present sur toute la sequence :
-    reproduit rolling_median(valeurs, ...) globale, a l'octet -- c'est ce
-    qui garde le preset custom (vote unique) inchange.
 
-    Les deux regimes MELANGES dans une seule fenetre, c'est le defaut
-    mesure sur m2-res_852p : le clair (nettete mediane 196) et le sombre
-    (nettete mediane 385) alternent 9 fois entre les frames 250 et 299, et
-    une frame claire normale (nettete ~196, pas floue) se retrouve jugee a
-    l'aune d'une reference gonflee par ses voisines sombres. On scinde donc
-    la sequence en deux sous-suites (une par regime, ordre temporel
-    preserve), on calcule la mediane glissante de CHACUNE avec la meme
-    regle de fenetre impaire mais dimensionnee a SA PROPRE longueur, puis
-    on redistribue le resultat aux positions d'origine.
+def _per_regime_reference(valeurs, largeur, regime):
+    """Local reference (rolling median), split by vote regime.
+
+    regime absent, or a single regime present over the whole sequence:
+    reproduces the GLOBAL rolling_median(valeurs, ...) byte for byte --
+    this is what keeps the custom preset (single vote) unchanged.
+
+    The two regimes MIXED inside a single window is the defect measured on
+    m2-res_852p: bright (median sharpness 196) and dark (median sharpness
+    385) alternate 9 times between frames 250 and 299, and a normal bright
+    frame (sharpness ~196, not blurry) ends up judged against a reference
+    inflated by its dark neighbors. So the sequence is split into two
+    subsequences (one per regime, temporal order preserved), each gets its
+    own rolling median with the same odd-window rule but sized to ITS OWN
+    length, and the result is redistributed back to the original
+    positions.
+
+    A regime whose subsequence is shorter than MIN_REGIME_FRAMES instead
+    reads the GLOBAL rolling reference at its own positions (see
+    MIN_REGIME_FRAMES): a subsequence that short has no median worth
+    computing on its own, and would otherwise validate itself no matter
+    its value.
     """
     valeurs = np.asarray(valeurs, dtype=np.float64)
     n = len(valeurs)
     modes = () if regime is None else np.unique(np.asarray(regime))
     if len(modes) < 2:
-        return rolling_median(valeurs, _fenetre_impaire(n, largeur))
+        return rolling_median(valeurs, _odd_window(n, largeur))
     regime = np.asarray(regime)
     ref = np.empty(n, dtype=np.float64)
+    ref_globale = None
     for mode in modes:
         idx = np.flatnonzero(regime == mode)
+        if len(idx) < MIN_REGIME_FRAMES:
+            if ref_globale is None:
+                ref_globale = rolling_median(valeurs, _odd_window(n, largeur))
+            ref[idx] = ref_globale[idx]
+            continue
         sous = valeurs[idx]
-        ref[idx] = rolling_median(sous, _fenetre_impaire(len(sous), largeur))
+        ref[idx] = rolling_median(sous, _odd_window(len(sous), largeur))
     return ref
 
 
@@ -341,7 +393,7 @@ def classify(disk_p90, limb_sharpness, flare_ratio, confiance, seuils=None,
 
     regime, s'il est fourni ET que les DEUX regimes apparaissent, calcule
     ref_p90/ref_sharp/ref_flare PAR REGIME plutot que sur toute la sequence
-    (voir _reference_par_regime) : un cache a vote unique, ou un regime
+    (voir _per_regime_reference) : un cache a vote unique, ou un regime
     absent, reste identique a l'octet. La reference COURTE du niveau
     (fenetre_niveau) reste volontairement GLOBALE, meme ici : les paliers
     d'exposition qu'elle doit suivre (voir plus bas) sont un phenomene de
@@ -360,9 +412,9 @@ def classify(disk_p90, limb_sharpness, flare_ratio, confiance, seuils=None,
     conf = np.nan_to_num(np.asarray(confiance, dtype=np.float64), nan=0.0)
     n = len(p90)
 
-    ref_p90 = _reference_par_regime(p90, s["fenetre_ref"], regime)
-    ref_sharp = _reference_par_regime(sharp, s["fenetre_ref"], regime)
-    ref_flare = _reference_par_regime(flare, s["fenetre_ref"], regime)
+    ref_p90 = _per_regime_reference(p90, s["fenetre_ref"], regime)
+    ref_sharp = _per_regime_reference(sharp, s["fenetre_ref"], regime)
+    ref_flare = _per_regime_reference(flare, s["fenetre_ref"], regime)
 
     trop_sombre = (p90 < s["dark_rel"] * ref_p90) | (p90 < s["dark_abs"])
     pas_de_lock = conf < s["conf_min"]
@@ -424,9 +476,11 @@ def verdicts_hors_source(cx, cy, rayon_visible, src_w, src_h, tolerance):
     ampute. Une tolerance de quelques dizaines de pixels sur un disque de
     798 px reste invisible.
 
-    Les coordonnees sont en pleine resolution source. rayon_visible accepte
-    un scalaire OU un tableau par frame : un cache a vote dual n'a pas le
-    meme rayon visible dans les deux regimes (voir verdicts.analyse_verdicts).
+    Les coordonnees sont en pleine resolution source.
+
+    rayon_visible accepts a scalar OR a per-frame array: a dual-vote cache
+    does not have the same visible radius in both regimes (see
+    verdicts.analyse_verdicts).
     """
     cx = np.asarray(cx, dtype=np.float64)
     cy = np.asarray(cy, dtype=np.float64)

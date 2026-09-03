@@ -1166,12 +1166,11 @@ def _reglages_reanalyse(source, cache_path, preset_effectif):
         reglages["scale"] = scale
     largeur_analyse = donnees.get("width")
     largeur_source = probe(source)["width"] if largeur_analyse else None
-    # Les DEUX rayons, par le meme chemin. Un cache a vote dual en porte un
-    # par regime (voir pipeline.analyze) : ne reprendre que le clair
-    # laisserait rebalayer le sombre, et le second balayage peut retomber
-    # sur le clair faute de disque sombre a son echantillonnage — c'est-a-
-    # dire REINTRODUIRE la secousse de 24 px que ce rayon existe pour
-    # supprimer.
+    # BOTH radii, through the same path. A dual-vote cache carries one per
+    # regime (see pipeline.analyze): carrying over only the bright one
+    # would let the dark one be rescanned, and that second scan can fall
+    # back to the bright radius for lack of a dark disc at its sampling --
+    # that is, REINTRODUCE the 24-px shake this radius exists to remove.
     for cle in ("radius", "radius_dark"):
         rayon = donnees.get(cle)
         if rayon is not None and largeur_analyse:

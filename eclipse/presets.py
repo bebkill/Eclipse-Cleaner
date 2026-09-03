@@ -80,23 +80,35 @@ _ANALYSIS_DEFAULTS = {
 #   Left at the knee rather than pushed higher: at 0.90 every frame scores
 #   1.000 and the measure stops discriminating at all.
 #
-#   seuils={"conf_ancre": 0.02}: an anchor-confidence floor for the cropping
+#   seuils={"conf_ancre": 0.04}: an anchor-confidence floor for the cropping
 #   TRAJECTORY (see verdicts.analyse_verdicts and quality.SEUILS_DEFAUT),
-#   0.0 (off) everywhere else. Measured on m2-res_852p's exposure-
-#   catastrophe frames 270-279: an unlocked Hough vote anchors a garbage
-#   center (cx as far off as -38.9) at conf 0.0040-0.0076, while every good
-#   frame in the same stretch (264-269, 274-276, 284-286) sits at conf >=
-#   0.042 -- better than 5x clear of the worst garbage. 0.02 is the
-#   existing conf_min value (see quality.SEUILS_DEFAUT), sitting mid-gap.
+#   0.0 (off) everywhere else. Three strata measured on m2-res_852p: an
+#   unlocked Hough vote anchors a garbage center (cx as far off as -38.9)
+#   at conf <= 0.0076 (frames 270-279); a photospheric-bead lock -- a real
+#   peak, just on the wrong feature (cx 97 against a true ~120.9, second
+#   contact) -- sits at conf 0.0242-0.0356 (frames 287-293); every good
+#   frame around them (264-269, 274-276, 284-286) sits at conf >= 0.042.
+#   0.02 (the conf_min value, see quality.SEUILS_DEFAUT) only cleared the
+#   first stratum and left the bead anchoring frames 290-293 kept at the
+#   wrong center -- two ~50-130 px jumps in the rendered trajectory at
+#   second contact. 0.04 sits between the bead and the good frames,
+#   clearing both -- but the margin is thin (0.0356 to 0.042, 0.006 wide):
+#   re-measure before raising it further. Collateral, checked across the
+#   whole video: 9 frames (294-296, 1167-1179's tail 1174-1179) drop from
+#   0.02 to under 0.04, all of them already rejected motion_blur under
+#   EITHER floor (never reach the render) and all still correctly
+#   positioned by their own measure -- only a manual viewer recovery of
+#   one of them would notice the interpolated stand-in.
 #   Scoped to sun rather than made universal because a global floor is
-#   measurably wrong: it would flip 44 legitimate, correctly-positioned
-#   frames on the reference custom video and 163 on Lunar-221924 from
-#   valid to interpolated (see quality.SEUILS_DEFAUT's conf_ancre comment).
+#   measurably wrong even at 0.02: it would flip 44 legitimate,
+#   correctly-positioned frames on the reference custom video and 163 on
+#   Lunar-221924 from valid to interpolated (see quality.SEUILS_DEFAUT's
+#   conf_ancre comment).
 _PRESETS = {
     "custom": {},
     "sun": {"radius_mode": "scan", "vote": "dual",
             "light_threshold": 0.70,
-            "seuils": {"conf_ancre": 0.02}},
+            "seuils": {"conf_ancre": 0.04}},
     "moon": {"lit_mode": "max", "radius_mode": "scan",
              "seuils": {"dark_abs": 5.0}},
     "planetary": {"lit_mode": "max", "radius_mode": "scan"},

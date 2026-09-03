@@ -96,7 +96,7 @@ FRAMES_ECHANTILLON_RAYON = 300
 #: span the bright phase too without pulling the median (verified on
 #: synthetic mixtures: 4 bright + 4 dark frames still return the dark
 #: radius to within 0.02 px of the dark-only scan).
-FRAMES_ECHANTILLON_RAYON_SOMBRE = 12
+DARK_RADIUS_SAMPLE_COUNT = 12
 
 # Fraction de la source couverte par la fenetre de recadrage par defaut.
 # Calibree sur la sequence de reference (1080x1920) : la tache 11 avait choisi
@@ -332,37 +332,37 @@ def _verifie_preset(cache_path, source, donnees, preset, seuil_lumiere=None):
                 f"--seuil-lumiere {seuil_lumiere:g}")
 
 
-def _rayon_regime_sombre(source, lw, lh, info, rayon_clair):
-    """Rayon du disque SOMBRE, balaye sur toute la video.
+def _dark_regime_radius(source, lw, lh, info, bright_radius):
+    """Radius of the DARK disc, scanned over the whole video.
 
-    Un profil a vote dual mesure deux cercles distincts et a donc besoin de
-    deux rayons ; voir locate.locate_center_regime pour la degenerescence
-    mesuree quand le vote sombre emprunte le rayon clair, et
-    FRAMES_ECHANTILLON_RAYON_SOMBRE pour l'echantillonnage.
+    A dual-vote profile measures two distinct circles and therefore needs
+    two radii; see locate.locate_center_regime for the measured
+    degeneracy when the dark vote borrows the bright radius, and
+    DARK_RADIUS_SAMPLE_COUNT for the sampling.
 
-    Une seconde passe de decodage a la resolution d'analyse est assumee :
-    elle ne coute que les frames jusqu'au dernier echantillon utile, et la
-    boucle s'arrete des qu'elle les a. C'est le prix de la seule fenetre
-    d'echantillonnage qui puisse VOIR la totalite.
+    A second decode pass at analysis resolution is accepted: it only
+    costs the frames up to the last useful sample, and the loop stops as
+    soon as it has them. That is the price of the only sampling window
+    that can SEE totality.
 
-    Repli : scan_radius leve quand aucune frame ne donne de pic sombre
-    exploitable — une eclipse partielle n'a pas de disque sombre du tout.
-    Le rayon clair vaut alors pour les deux regimes, ce qui redonne
-    exactement le comportement anterieur sur ces sequences.
+    Fallback: scan_radius raises when no frame yields an exploitable dark
+    peak -- a partial eclipse has no dark disc at all. The bright radius
+    then stands for both regimes, which restores exactly the previous
+    behavior on those sequences.
     """
     total = max(1, int(info["duration"] * info["fps"]))
-    pas = max(1, total // FRAMES_ECHANTILLON_RAYON_SOMBRE)
+    pas = max(1, total // DARK_RADIUS_SAMPLE_COUNT)
     echantillon = []
     with FrameReader(source, width=lw, height=lh) as reader:
         for i, f in enumerate(reader):
             if i % pas == 0:
                 echantillon.append(f.astype(np.float32).mean(axis=2))
-                if len(echantillon) >= FRAMES_ECHANTILLON_RAYON_SOMBRE:
+                if len(echantillon) >= DARK_RADIUS_SAMPLE_COUNT:
                     break
     try:
         return scan_radius(echantillon, vote="dark")
     except ValueError:
-        return rayon_clair
+        return bright_radius
 
 
 def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
@@ -378,12 +378,12 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     seuil_lumiere : remplace le seuil de lumiere du profil (voir
     quality.masse_captee).
 
-    radius / radius_dark : rayons EXPLICITES en pleine resolution, pour le
-    regime clair et pour le regime sombre. radius seul vaut pour les DEUX
-    regimes — un ordre de l'utilisateur l'emporte entierement, aucun
-    balayage n'a lieu. radius_dark seul laisse balayer le rayon clair. Pas
-    de drapeau de ligne de commande pour radius_dark : la surface reste
-    minimale, et --radius suffit a reprendre la main sur les deux.
+    radius / radius_dark: EXPLICIT radii in full resolution, for the bright
+    regime and for the dark regime. radius alone stands for BOTH regimes --
+    an explicit user order wins entirely, no scan takes place. radius_dark
+    alone still lets the bright radius be scanned. No CLI flag for
+    radius_dark: the surface stays minimal, and --radius is enough to
+    reclaim control of both.
 
     processus : nombre de travailleurs pour le calcul par frame ; par defaut
     1, soit le chemin sequentiel. Le defaut de la BIBLIOTHEQUE est deliberement
@@ -436,13 +436,13 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     # il repete le rayon clair, ce qui laisse les profils non-dual
     # bit-identiques (echantillonnage des 300 premieres frames inchange).
     if radius_dark is not None:
-        r_sombre = float(radius_dark) * (lw / info["width"])
+        dark_radius = float(radius_dark) * (lw / info["width"])
     elif radius is not None:
-        r_sombre = r                      # l'ordre de l'utilisateur l'emporte
+        dark_radius = r                   # l'ordre de l'utilisateur l'emporte
     elif params["vote"] == "dual":
-        r_sombre = _rayon_regime_sombre(source, lw, lh, info, r)
+        dark_radius = _dark_regime_radius(source, lw, lh, info, r)
     else:
-        r_sombre = r
+        dark_radius = r
 
     frames = []
     # closing() libere le pool des que le with est quitte, y compris par une
@@ -450,7 +450,7 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     # donc le generateur et son pool avec elle.
     with FrameReader(source, width=lw, height=lh) as reader, \
          closing(applique_travaux(
-             mesure_frame, ((rgb, r, r_sombre, params) for rgb in reader),
+             mesure_frame, ((rgb, r, dark_radius, params) for rgb in reader),
              nb)) as mesures:
         # Le parent decode et distribue ; les travailleurs calculent. Les
         # resultats reviennent dans l'ordre des frames, ce qui rend le cache
@@ -476,12 +476,12 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     if not frames:
         raise ValueError(f"Aucune frame decodee depuis {source}")
     print(f"{len(frames)} frames, rayon apparent estime a {r:.1f} px")
-    if r_sombre != r:
-        print(f"Rayon du disque sombre (totalite) : {r_sombre:.1f} px")
+    if dark_radius != r:
+        print(f"Rayon du disque sombre (totalite) : {dark_radius:.1f} px")
 
     donnees = {"schema": SCHEMA_VERSION, "source": _signature_source(source),
                "preset": preset, "analysis_params": params,
-               "scale": scale, "radius": r, "radius_dark": r_sombre,
+               "scale": scale, "radius": r, "radius_dark": dark_radius,
                "width": lw, "height": lh,
                "fps": info["fps"], "frames": frames}
     with open(cache_path, "w", encoding="utf-8") as f:
