@@ -161,5 +161,9 @@
  "type_moon": "Moon",
  "type_planetary": "Planetary",
  "type_custom": "Custom",
- "type_auto": "Auto"
+ "type_auto": "Auto",
+ "cadrage_libelle": "Crop",
+ "cadrage_auto": "auto",
+ "cadrage_custom": "custom",
+ "cadrage_auto_infobulle": "Return to the recommended crop size"
 }

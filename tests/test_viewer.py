@@ -3960,3 +3960,235 @@ def test_reanalysis_settings_drop_the_dark_radius_on_preset_change(tmp_path):
     analyze(src, cache, scale=1.0, preset="custom")
     autres = viewer._reglages_reanalyse(src, cache, "moon")
     assert "radius_dark" not in autres
+
+
+# -- The crop window: a visible rectangle over the central thumbnail, resized
+# with the mouse, stored per source in the work folder. The SIZE is the
+# existing `taille` plumbing (pipeline default, CLI --taille,
+# porteur.cadrage["taille"], descriptor reglages): nothing new decides what
+# the render cuts out, which is what makes the staleness banner follow on its
+# own.
+
+def _porteur_pret(tmp_path, **kw):
+    """A ready porteur on a fresh 120x200 source. Returns (porteur, src)."""
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0)
+    dossier = str(tmp_path / "v")
+    genere(src, dossier, _signature_source(src))
+    return Porteur(src, cache, str(tmp_path / "d.json"), dossier, **kw), src
+
+
+def _fenetre_recommandee(src):
+    """The recommended crop window for this source, straight from pipeline."""
+    from eclipse.pipeline import tailles_defaut
+
+    info = probe(src)
+    fenetre, _ = tailles_defaut(info["width"], info["height"])
+    return list(fenetre)
+
+
+def test_post_cadrage_stores_the_size_for_this_source(serveur, tmp_path):
+    """The chosen size must OUTLIVE the porteur that received it.
+
+    Without the file, resizing the rectangle would be lost at the next
+    source switch (Porteur._pose rebuilds everything from disk) and the page
+    would silently go back to the recommended window.
+    """
+    url, _, src = serveur
+    code, _ = _requete("POST", url + "/api/cadrage", {"taille": [60, 100]})
+    assert code == 200
+    d = json.loads(_get(url + "/api/frames")[1])["cadrage"]
+    assert d["taille"] == [60, 100]
+    assert d["auto"] is False
+    assert os.path.isfile(viewer.chemin_cadrage(src))
+    assert viewer.chemin_cadrage(src).startswith(work_folder(src))
+    # A brand new porteur on the same source reads it back.
+    autre = Porteur(src, str(tmp_path / "a.json"), str(tmp_path / "d.json"),
+                    str(tmp_path / "v"))
+    assert autre.cadrage["taille"] == (60, 100)
+
+
+def test_post_cadrage_auto_removes_the_stored_size(serveur):
+    """Asking for "auto" DELETES the file rather than writing today's
+    recommendation into it.
+
+    The recommendation is derived from the source (7/9 of its dimensions):
+    freezing it into the file would keep it after a change that ought to
+    move it.
+    """
+    url, _, src = serveur
+    _requete("POST", url + "/api/cadrage", {"taille": [60, 100]})
+    code, _ = _requete("POST", url + "/api/cadrage", {"auto": True})
+    assert code == 200
+    assert not os.path.exists(viewer.chemin_cadrage(src))
+    d = json.loads(_get(url + "/api/frames")[1])["cadrage"]
+    assert d["taille"] == _fenetre_recommandee(src)
+    assert d["auto"] is True
+
+
+def test_the_recommended_size_reads_as_auto_even_when_asked_for(serveur):
+    """"auto" describes the size IN FORCE, not how it got there.
+
+    And the recommendation itself (94x156 on this source) sits 0,43 % off
+    the source ratio, because yuv420p forces even dimensions: a validation
+    demanding an exact ratio would refuse the very size pipeline recommends.
+    """
+    url, _, src = serveur
+    recommandee = _fenetre_recommandee(src)
+    code, _ = _requete("POST", url + "/api/cadrage", {"taille": recommandee})
+    assert code == 200
+    d = json.loads(_get(url + "/api/frames")[1])["cadrage"]
+    assert d["taille"] == recommandee and d["auto"] is True
+
+
+@pytest.mark.parametrize("taille", [
+    [61, 101],          # odd: yuv420p refuses odd dimensions
+    [60, 140],          # ratio far off the output's: the disc would stretch
+    [1200, 2000],       # larger than the source: no pixels to show
+    [0, 0],             # degenerate
+    ["60", "100"],      # not integers
+    [60],               # not a couple
+    "60x100",           # not even a list
+])
+def test_post_cadrage_refuses_an_impossible_size(serveur, taille):
+    url, _, _ = serveur
+    code, _ = _requete("POST", url + "/api/cadrage", {"taille": taille})
+    assert code == 400
+
+
+def test_post_cadrage_during_a_task_is_refused(serveur_avec_moteur):
+    """A refusal, like /api/preset: a render already started holds a copy of
+    porteur.cadrage while the descriptor written at delivery reads the
+    state's reglages -- reloading the porteur under it would make the two
+    disagree about the window actually applied."""
+    url, moteur, _ = serveur_avec_moteur
+    libere = threading.Event()
+    moteur.lance("analyse", lambda: libere.wait(30.0))
+    try:
+        code, _ = _requete("POST", url + "/api/cadrage", {"taille": [60, 100]})
+        assert code == 409
+    finally:
+        libere.set()
+    assert moteur.attend(delai=30.0)
+
+
+def test_frames_body_carries_the_window_trajectory(serveur):
+    """The page places the rectangle itself, frame by frame, from these
+    centers (mirroring track.planifie_trajectoire): without them it could
+    only draw a window in the middle of the source, which is exactly what
+    the render does NOT do."""
+    url, _, _ = serveur
+    d = json.loads(_get(url + "/api/frames")[1])["cadrage"]
+    assert d["source"] == [120, 200]
+    assert d["sortie"] == [120, 200]
+    assert len(d["traj"]) == 40
+    assert all(len(p) == 2 for p in d["traj"])
+    assert all(isinstance(v, float) for p in d["traj"] for v in p)
+
+
+def test_a_viewer_without_source_announces_no_crop():
+    porteur = Porteur(None, None, None, None)
+    assert "cadrage" not in viewer._corps_frames(porteur.etat)
+
+
+def test_the_render_applies_the_stored_crop_size(tmp_path, monkeypatch):
+    """The whole point: the stored size must reach render() AND the
+    descriptor, by the one path the command line already uses."""
+    from eclipse import pipeline
+    from eclipse.descripteur import chemin_descripteur
+    from eclipse.viewer import _prepare
+
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0)
+    dossier = str(tmp_path / "v")
+    genere(src, dossier, _signature_source(src))
+    viewer.ecrit_cadrage(src, (60, 100))
+    porteur = Porteur(src, cache, str(tmp_path / "d.json"), dossier)
+    assert porteur.cadrage["taille"] == (60, 100)
+
+    recu = {}
+
+    def faux_render(*a, **k):
+        recu.update(k)
+        with open(a[1], "wb") as f:
+            f.write(b"rendu")
+
+    monkeypatch.setattr(pipeline, "render", faux_render)
+    travail, _, _ = _prepare(porteur, Moteur(), "rendu", False)
+    travail()
+    assert recu["taille"] == (60, 100)
+    with open(chemin_descripteur(_sortie_rendu(src)), encoding="utf-8") as f:
+        inscrit = json.load(f)["reglages"]["cadrage"]["taille"]
+    assert inscrit == [60, 100]
+    # And the render it just wrote is NOT stale: the size the descriptor
+    # records is the one the state carries.
+    porteur.recharge()
+    assert viewer._corps_frames(porteur.etat)["etapes"]["rendu"] == "faite"
+
+
+def test_the_stored_crop_size_beats_the_command_line(tmp_path):
+    """Stored > --taille > pipeline default, resolved in ONE place."""
+    porteur, src = _porteur_pret(tmp_path, taille=(94, 156))
+    assert porteur.cadrage["taille"] == (94, 156)      # command line
+    viewer.ecrit_cadrage(src, (60, 100))
+    porteur.recharge()
+    assert porteur.cadrage["taille"] == (60, 100)      # stored wins
+    viewer.efface_cadrage(src)
+    porteur.recharge()
+    assert porteur.cadrage["taille"] == (94, 156)      # back to the CLI
+
+
+def test_without_anything_stored_or_asked_the_size_stays_absent(tmp_path):
+    """No file and no --taille: the key must not appear at all.
+
+    render() owns its default (pipeline.tailles_defaut) and the descriptor
+    must keep recording an ABSENCE, not a materialised value -- otherwise
+    every render made before this feature would read as stale.
+    """
+    porteur, _ = _porteur_pret(tmp_path)
+    assert "taille" not in porteur.cadrage
+    assert porteur.etat["reglages"]["cadrage"] == {}
+
+
+def test_changing_source_re_reads_the_stored_crop_size(tmp_path):
+    """A crop chosen for A belongs to A, exactly like its decisions."""
+    a = _cree_video(tmp_path, "a.mp4")
+    b = _cree_video(tmp_path, "b.mp4")
+    viewer.ecrit_cadrage(a, (60, 100))
+    porteur = Porteur(None, None, None, None)
+    porteur.change_source(a)
+    assert porteur.cadrage["taille"] == (60, 100)
+    porteur.change_source(b)
+    assert "taille" not in porteur.cadrage
+    porteur.change_source(a)
+    assert porteur.cadrage["taille"] == (60, 100)
+
+
+def test_an_unreadable_stored_crop_falls_back_instead_of_raising(tmp_path):
+    """One bad byte in a derived file must not stop the viewer from opening
+    a video whose review is intact: it reads as "nothing stored"."""
+    porteur, src = _porteur_pret(tmp_path)
+    with open(viewer.chemin_cadrage(src), "w", encoding="utf-8") as f:
+        f.write("{ ceci n est pas du json")
+    porteur.recharge()
+    assert "taille" not in porteur.cadrage
+    assert porteur.etat["cadrage"]["auto"] is True
+
+
+def test_the_page_carries_the_crop_frame_and_its_control():
+    """The behaviour is JavaScript and out of pytest's reach; what is kept
+    here are the anchors it depends on."""
+    page = _page()
+    for marqueur in ('id="cadrage-controles"', 'id="cadrage-etat"',
+                     'id="cadrage-auto"', "cadre-recadrage",
+                     "poignee-recadrage", "/api/cadrage",
+                     'data-t-title="cadrage_auto_infobulle"'):
+        assert marqueur in page, marqueur
+    # #cadrage-etat carries no data-t: paintCropLabel writes its text, and a
+    # data-t would erase it at every language change (the trap already
+    # documented for #source-courante and the step buttons).
+    debut = page.index('id="cadrage-etat"')
+    balise = page[page.rindex("<", 0, debut):page.index(">", debut) + 1]
+    assert "data-t=" not in balise, f"data-t interdit sur ce noeud : {balise}"

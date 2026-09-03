@@ -161,5 +161,9 @@
  "type_moon": "Lune",
  "type_planetary": "Planétaire",
  "type_custom": "Personnalisé",
- "type_auto": "Auto"
+ "type_auto": "Auto",
+ "cadrage_libelle": "Cadrage",
+ "cadrage_auto": "auto",
+ "cadrage_custom": "personnalisé",
+ "cadrage_auto_infobulle": "Revenir au cadrage recommandé"
 }

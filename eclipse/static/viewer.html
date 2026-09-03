@@ -701,6 +701,49 @@
   .vignette-boite.rejetee .etiquette { background: var(--voile-fort); }
   .motif { color: var(--motif); font-weight: 600; }
 
+  /* -- LE CADRE DE RECADRAGE, pose sur la vignette centrale --
+     Il montre, a l'echelle de la vignette, la fenetre que le rendu va
+     reellement decouper pour CETTE frame : sa POSITION suit le disque (voir
+     track.planifie_trajectoire, que la page rejoue dans cropWindowCenter) et
+     n'appartient jamais a l'utilisateur ; sa TAILLE, elle, se tire par la
+     poignee du coin, et c'est le seul geste de cette fonction.
+     Couleurs FIXES et non des jetons de theme : il se pose sur une photo
+     inconnue, pas sur le fond de la page -- meme raison que .etiquette
+     ci-dessus. Un trait clair double d'un halo sombre (box-shadow des deux
+     cotes du trait) reste lisible sur une photo blanche comme sur un ciel
+     noir, ce qu'aucune teinte unique ne fait. */
+  #cadre-recadrage {
+    position: absolute; border: 1px solid var(--sur-image);
+    box-shadow: 0 0 0 1px var(--voile), inset 0 0 0 1px var(--voile);
+    background: rgba(255, 255, 255, 0.06);
+    /* Le cadre lui-meme ne se saisit pas : il couvre la vignette et
+       intercepterait sinon le survol de l'image. Seule la poignee remet
+       pointer-events a auto. */
+    pointer-events: none;
+  }
+  /* DANS le cadre, contre son coin, et non a cheval sur le trait : la
+     vignette masque son debordement (.vignette-boite, overflow: hidden), et
+     une fenetre qui deborde du cadre filme -- ce que le depassement de butee
+     autorise, voir track.planifie_trajectoire -- emporterait avec elle une
+     poignee posee a l'exterieur, qui deviendrait insaisissable.
+     touch-action: none, sans quoi le navigateur prend le geste pour un
+     defilement et n'envoie aucun pointermove. */
+  #poignee-recadrage {
+    position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+    background: var(--sur-image); border: 1px solid var(--voile-fort);
+    border-radius: 3px; cursor: nwse-resize; pointer-events: auto;
+    touch-action: none;
+  }
+  /* La mesure vivante pendant le geste : les dimensions en pixels SOURCE,
+     seule facon de viser une valeur precise a la souris. Meme voile que
+     .etiquette, pour la meme raison. */
+  #cadrage-mesure {
+    position: absolute; left: 0; top: 0; padding: 1px 5px;
+    font-size: 11px; font-variant-numeric: tabular-nums;
+    background: var(--voile); color: var(--sur-image); white-space: nowrap;
+  }
+  #cadrage-mesure[hidden] { display: none; }
+
   /* -- etat de la frame courante, colle sous la pellicule -- */
   /* La pastille etait poussee a l'extreme droite de la barre de transport,
      loin de la vignette dont elle parle. Elle reste ici, contre l'image et
@@ -721,6 +764,15 @@
     color: var(--texte-faible); font-size: 12.5px;
     font-variant-numeric: tabular-nums;
   }
+  /* Le libelle du cadrage et son retour au recommande, dans le pied de la
+     pellicule : ils parlent de la fenetre dessinee sur la vignette juste
+     au-dessus, pas de la chaine de traitement du rail. Garde [hidden]
+     explicite, comme label.filtre et #couleur-reglages : la regle display
+     d'auteur battrait sinon celle du navigateur. */
+  #cadrage-controles { display: flex; align-items: center; gap: 6px; }
+  #cadrage-controles[hidden] { display: none; }
+  #cadrage-etat { color: var(--texte-faible); font-size: 12.5px; }
+  #cadrage-auto { padding: 2px 9px; line-height: 1.3; font-size: 14px; }
 
   /* -- timeline -- */
   /* Le canvas peint chaque frame selectionnee sur toute la hauteur : c'est
@@ -995,6 +1047,22 @@ try {
       <button id="statut" data-t-title="bouton_statut_infobulle"
               title="Basculer conserver / ecarter (k)"></button>
       <div id="infos"></div>
+      <!-- Le cadrage : ce que dit le rectangle pose sur la vignette centrale,
+           et de quoi revenir a la taille recommandee. Ici, contre l'image
+           dont il parle, et non dans le rail, qui ne porte que ce qui PILOTE
+           la chaine de traitement. -->
+      <div id="cadrage-controles" hidden>
+        <!-- AUCUN data-t sur ce noeud : paintCropLabel y ecrit « Cadrage :
+             auto » ou « Cadrage : personnalise (60x100) », et la boucle
+             [data-t] d'appliqueLangue l'effacerait a chaque changement de
+             langue -- meme piege que #source-courante et les trois boutons
+             d'etape. Les trois cles (cadrage_libelle, cadrage_auto,
+             cadrage_custom) sont employees en t() litteral dans
+             paintCropLabel, rappelee par rafraichitTextesDynamiques. -->
+        <span id="cadrage-etat"></span>
+        <button id="cadrage-auto" data-t-title="cadrage_auto_infobulle"
+                title="Revenir au cadrage recommande">↺</button>
+      </div>
     </div>
 
     <canvas id="timeline" height="40"></canvas>
@@ -1129,6 +1197,34 @@ const cacheImg = new Map();
 // chargee ni a la position courante. Vide tant qu'aucun rendu n'est sur le
 // disque — il n'y a alors rien a quoi comparer.
 let divergentes = new Set();
+
+// The crop window as /api/frames describes it: {taille, auto, source,
+// sortie, depassement, traj}. Null until a source has answered, and without
+// `traj` until its analysis exists.
+//
+// It is the OVERLAY's data (see placeCropFrame) and the footer label's MEMO
+// at the same time: paintCropLabel replays it on every language change,
+// exactly as derniereManque and lastDiagnostic are replayed, so that the
+// label is repainted without asking the server again.
+let crop = null;
+
+// True while the corner handle is being dragged. Read by the global keydown
+// handler: a drag owns the keyboard as well as the pointer, or the arrow
+// keys would step the filmstrip out from under the rectangle being sized.
+let cropDragging = false;
+
+// The window's aspect ratio must stay within this of the OUTPUT ratio -- the
+// server refuses anything further (see viewer.TOLERANCE_RAPPORT, 0.005) and
+// so, at render time, the final upscale would stretch the disc into an
+// ellipse. Slightly tighter than the server's own bound so that a size this
+// page computes can never land on the wrong side of a rounding.
+const CROP_RATIO_TOLERANCE = 0.004;
+
+// Smallest window this page will let the handle produce, as a fraction of
+// the source width. Not a server rule (it accepts anything from 2 px up):
+// it stops a careless drag from collapsing the window to a few pixels, a
+// state whose handle would then be almost impossible to grab again.
+const CROP_MIN_FRACTION = 0.1;
 
 // Seul endroit ou la regle d'etat effectif existe cote client.
 function conservee(f) {
@@ -1446,7 +1542,17 @@ document.addEventListener("keydown", (e) => {
   // checkboxes just happen not to collide with the keys they're focused
   // for); this one is scoped narrowly to the new bar rather than widened
   // to every control on the page.
-  if (cible && cible.closest && cible.closest("#apercu-controles")) return;
+  // #cadrage-controles joins it for the same reason: its reset button is
+  // focusable, and Space on it would both activate the button and start
+  // playback. The list is still a list of NAMED bars, not "every control on
+  // the page" -- the filter checkboxes and the type <select> keep passing
+  // through, as they always have.
+  if (cible && cible.closest
+      && cible.closest("#apercu-controles, #cadrage-controles")) return;
+  // A crop drag in progress: the pointer is captured, but keystrokes are
+  // not, and stepping the filmstrip here would rebuild the very rectangle
+  // being sized.
+  if (cropDragging) return;
   if (e.key === " ") { e.preventDefault(); lecture(!etat.lecture); }
   else if (e.key === "ArrowRight") pasSelection(+1);
   else if (e.key === "ArrowLeft") pasSelection(-1);
@@ -1483,6 +1589,9 @@ const elInfos = document.getElementById("infos");
 const elFiltreRetenues = document.getElementById("chk-filtre-retenues");
 const elFiltreNonRetenues = document.getElementById("chk-filtre-non-retenues");
 const elFiltreModifiees = document.getElementById("chk-filtre-modifiees");
+const elCropControls = document.getElementById("cadrage-controles");
+const elCropState = document.getElementById("cadrage-etat");
+const elCropAuto = document.getElementById("cadrage-auto");
 
 // Reaction commune aux trois cases de filtre (clic souris ou raccourci
 // clavier r/e/m, qui basculent .checked puis appellent ceci) : un seul
@@ -1551,6 +1660,210 @@ document.getElementById("btn-stop").addEventListener("click", () => { lecture(fa
 document.getElementById("btn-prec").addEventListener("click", () => pasSelection(-1));
 document.getElementById("btn-suiv").addEventListener("click", () => pasSelection(+1));
 elStatut.addEventListener("click", () => bascule());
+
+// -- THE CROP WINDOW, drawn over the central thumbnail.
+//
+// What the render will actually cut out of the source, at the thumbnail's
+// scale. Two halves, and only one of them is the user's:
+//   - the POSITION follows the disc, frame by frame, and is never chosen
+//     here (see cropWindowCenter);
+//   - the SIZE is dragged by the corner handle, and is the existing `taille`
+//     of the pipeline -- the same value --taille sets on the command line.
+
+// Nearest even integer, at least 2: yuv420p refuses odd dimensions, and the
+// server refuses them with it (see viewer._taille_demandee).
+function evenRound(v) {
+  return Math.max(2, 2 * Math.round(v / 2));
+}
+
+// Window center for frame n at this size, in SOURCE pixels.
+//
+// Mirrors track.planifie_trajectoire on the server: the measured disc
+// center, clipped to the corridor the window can reach -- half a window in
+// from each edge, widened by `depassement`, the overshoot the render fills
+// by edge replication. The rectangle therefore sits exactly where the
+// render will place it, including where it stops following the disc, which
+// is the one thing a rectangle drawn in the middle of the image could never
+// show.
+function cropWindowCenter(n, w, h) {
+  const srcW = crop.source[0], srcH = crop.source[1];
+  const p = (crop.traj && crop.traj[n]) || [srcW / 2, srcH / 2];
+  const d = crop.depassement;
+  return [
+    Math.min(Math.max(p[0], w / 2 - d), srcW - w / 2 + d),
+    Math.min(Math.max(p[1], h / 2 - d), srcH - h / 2 + d),
+  ];
+}
+
+// The even, in-range window size a pointer at (sx, sy) SOURCE pixels asks
+// for, anchored on `anchor`. Returns null when nothing acceptable comes out.
+//
+// The corner handle drives BOTH axes -- whichever of the two asks for the
+// larger window wins -- but the height is always derived from the width, so
+// the aspect stays locked on the output ratio. The width then steps DOWN by
+// 2 until the pair passes the same checks the server applies: rounding two
+// dimensions to even can push a small window just outside the ratio
+// tolerance, and a drag must never end in a 400.
+function cropSizeFrom(sx, sy, anchor) {
+  const srcW = crop.source[0], srcH = crop.source[1];
+  const outW = crop.sortie[0], outH = crop.sortie[1];
+  const rapport = outW / outH;
+  const minW = Math.min(srcW, Math.max(2, evenRound(srcW * CROP_MIN_FRACTION)));
+  let want = Math.max(2 * Math.abs(sx - anchor[0]),
+                      2 * Math.abs(sy - anchor[1]) * rapport);
+  want = Math.min(want, srcW, srcH * rapport);
+  for (let w = evenRound(Math.max(minW, want)); w >= minW; w -= 2) {
+    const h = evenRound(w * outH / outW);
+    if (w <= srcW && h <= srcH
+        && Math.abs((w / h) / rapport - 1) <= CROP_RATIO_TOLERANCE)
+      return [w, h];
+  }
+  return null;
+}
+
+// Attaches the rectangle and its handle to the central thumbnail's box.
+// Called from dessineBandeau, so it is redone every time the strip is
+// rebuilt -- a new position, a new zoom, a window resized by the layout:
+// there is no separate observer to keep in step, and no stale rectangle can
+// survive, since dessineBandeau empties #bandeau first.
+function placeCropFrame(boite, n, boxW, boxH) {
+  if (!crop || !crop.traj) return;
+  const srcW = crop.source[0], srcH = crop.source[1];
+  let w = crop.taille[0], h = crop.taille[1];
+  // object-fit: cover on the thumbnail (see .vignette-boite img): the image
+  // is scaled to COVER the box and the overflow is cropped, so a single
+  // scale for both axes plus a centering offset for what the cover cuts
+  // away. A box that keeps the source's aspect ratio -- the ordinary case,
+  // dessineBandeau sizing its boxes on it -- gives k = boxW / srcW and no
+  // offset at all.
+  const k = Math.max(boxW / srcW, boxH / srcH);
+  const ox = (boxW - srcW * k) / 2, oy = (boxH - srcH * k) / 2;
+
+  const cadre = document.createElement("div");
+  cadre.id = "cadre-recadrage";
+  const mesure = document.createElement("div");
+  mesure.id = "cadrage-mesure";
+  mesure.hidden = true;
+  const poignee = document.createElement("div");
+  poignee.id = "poignee-recadrage";
+  cadre.appendChild(mesure);
+  cadre.appendChild(poignee);
+  boite.appendChild(cadre);
+
+  // The center is FROZEN at pointerdown and reused for the whole gesture:
+  // the rectangle then grows symmetrically around the point it was grabbed
+  // from, instead of sliding as the corridor of cropWindowCenter widens
+  // with the size. The reload that follows the release puts it back on the
+  // real, size-dependent center.
+  let anchor = null;
+
+  function draw(largeur, hauteur, centre) {
+    const c = centre || cropWindowCenter(n, largeur, hauteur);
+    cadre.style.left = (ox + (c[0] - largeur / 2) * k) + "px";
+    cadre.style.top = (oy + (c[1] - hauteur / 2) * k) + "px";
+    cadre.style.width = (largeur * k) + "px";
+    cadre.style.height = (hauteur * k) + "px";
+  }
+  draw(w, h, null);
+
+  poignee.addEventListener("pointerdown", (e) => {
+    // preventDefault: without it the browser starts its own drag-select on
+    // the thumbnail, and the pointermove stream stops halfway through.
+    e.preventDefault();
+    poignee.setPointerCapture(e.pointerId);
+    cropDragging = true;
+    anchor = cropWindowCenter(n, w, h);
+    mesure.hidden = false;
+    mesure.textContent = w + "×" + h;
+  });
+
+  poignee.addEventListener("pointermove", (e) => {
+    if (!cropDragging) return;
+    const r = boite.getBoundingClientRect();
+    // Pointer back into SOURCE pixels: the inverse of the cover mapping.
+    const taille = cropSizeFrom((e.clientX - r.left - ox) / k,
+                                (e.clientY - r.top - oy) / k, anchor);
+    if (!taille) return;
+    w = taille[0]; h = taille[1];
+    draw(w, h, anchor);
+    mesure.textContent = w + "×" + h;
+  });
+
+  function releve(e) {
+    if (!cropDragging) return;
+    cropDragging = false;
+    mesure.hidden = true;
+    // A capture already released by the browser (pointercancel) throws
+    // here; the gesture is over either way.
+    try { poignee.releasePointerCapture(e.pointerId); } catch (err) {}
+    if (w === crop.taille[0] && h === crop.taille[1]) {
+      // Nothing to record. Redraw on the REAL center rather than on the
+      // frozen anchor, so the rectangle does not stay a few pixels off
+      // after a gesture that changed nothing.
+      draw(w, h, null);
+      return;
+    }
+    sendCrop({ taille: [w, h] });
+  }
+  poignee.addEventListener("pointerup", releve);
+  poignee.addEventListener("pointercancel", releve);
+}
+
+// « Cadrage : auto » / « Cadrage : personnalise (60x100) ». Dynamic, hence
+// no data-t on #cadrage-etat: rafraichitTextesDynamiques replays this from
+// `crop`, the memo, at every language change -- the house pattern of
+// afficheSource and the step buttons.
+function paintCropLabel() {
+  elCropControls.hidden = !crop;
+  if (!crop) return;
+  // TWO entirely literal calls to t(), never t(crop.auto ? "a" : "b"): a key
+  // built from a ternary is invisible to _cles_employees
+  // (tests/test_langues.py) and both keys would have to be declared as
+  // server-side ones for nothing. Same reasoning as dessine()'s
+  // etat_conservee / etat_ecartee.
+  const valeur = crop.auto
+    ? t("cadrage_auto")
+    : t("cadrage_custom") + " (" + crop.taille[0] + "×" + crop.taille[1] + ")";
+  // " : " composed here rather than carried by the key, exactly like the
+  // theme button's own label just below in this file.
+  elCropState.textContent = t("cadrage_libelle") + " : " + valeur;
+}
+
+// POSTs the crop size (or {auto: true}) and reloads: the change makes an
+// existing render stale, and it is chargeFrames that reports the « a
+// refaire » state -- the same round trip as envoieCouleur, for the same
+// reason.
+//
+// The review position is put BACK afterwards. chargeFrames returns to frame
+// 0, which is right when a source or a color setting changes, but here it
+// would throw away the very frame whose framing was being judged -- the
+// user is looking at the rectangle on THAT image.
+async function sendCrop(demande) {
+  const pos = etat.pos;
+  let r;
+  try {
+    r = await fetch("/api/cadrage", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(demande),
+    });
+  } catch (e) {
+    return signaleServeurInjoignable();
+  }
+  if (!r.ok) {
+    // 409 (a task is running) or 400 (a size the server refuses): the page
+    // does not keep the refused value, chargeFrames below repaints the one
+    // in force.
+    signaleErreur("erreur_requete_refusee");
+    await chargeFrames();
+    if (etat.frames.length) vaVers(Math.min(pos, etat.frames.length - 1));
+    return;
+  }
+  effaceErreur();
+  await chargeFrames();
+  if (etat.frames.length) vaVers(Math.min(pos, etat.frames.length - 1));
+}
+
+elCropAuto.addEventListener("click", () => sendCrop({ auto: true }));
 
 // Reconstruit le bandeau de vignettes autour de etat.pos, sur 2*rayon+1
 // cases (la centrale en taille pleine, les voisines reduites a 55 % et
@@ -1643,6 +1956,12 @@ function dessineBandeau() {
         etiquette.appendChild(motif);
       }
       boite.appendChild(etiquette);
+      // Le cadre de recadrage, sur la vignette CENTRALE seulement : il decrit
+      // la frame en cours de revue. Pose ici, dans la reconstruction du
+      // bandeau, il se replace tout seul a chaque deplacement, chaque zoom et
+      // chaque redimensionnement de la fenetre -- il n'y a pas de second
+      // mecanisme a tenir en phase.
+      if (estCentre) placeCropFrame(boite, n, baseL, baseH);
     }
     elBandeau.appendChild(boite);
   }
@@ -1969,6 +2288,12 @@ async function chargeFrames() {
   currentPreset = d.preset || null;
   elTypeRow.hidden = sourceCourante === null;
   if (currentPreset) elEclipseType.value = currentPreset.effectif;
+  // The crop window, on both source-bearing shapes of the response (see
+  // _corps_frames). Read BEFORE vaVers(0) below, which redraws the strip and
+  // with it the overlay -- placing it from a stale `crop` would draw the
+  // PREVIOUS source's window over the new source's thumbnails.
+  crop = d.cadrage || null;
+  paintCropLabel();
   updateTitle();
   document.body.classList.toggle("pas-pret", !d.pret);
   elManquant.hidden = d.pret;
@@ -2284,6 +2609,11 @@ function rafraichitTextesDynamiques() {
   // again after that.
   if (previewUnavailableShown)
     elApercuIndisponible.textContent = t("apercu_indisponible");
+  // Same mechanism again, for the crop label: composed once by chargeFrames
+  // from `crop` and never touched afterwards, so it needs its own replay --
+  // "Cadrage : auto" would otherwise stay French next to a page switched to
+  // English.
+  paintCropLabel();
   // The play button's label toggles Play/Pause off the video's own state
   // (see refreshApercuPlayLabel), not a data-t: repaint it here too, or a
   // language switch mid-playback would leave it showing the old language.
