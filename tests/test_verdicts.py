@@ -148,3 +148,47 @@ def test_valid_measure_count_is_reported():
     d["frames"][5]["masse_captee"] = 0.10
     r = analyse_verdicts(d, 1080, 1920)
     assert r["mesures_valides"] == 29
+
+
+def test_hors_source_uses_the_radius_of_each_frame_s_regime():
+    """Le disque visible n'a pas la meme taille dans les deux regimes.
+
+    Un cache dual porte deux rayons ; la borne hors_source est calculee sur
+    le DISQUE, donc sur celui que la frame a reellement montre. Ici le
+    rayon sombre est deux fois le clair : le meme centre tient dans la
+    source en regime clair et deborde en regime sombre.
+    """
+    # kx = 2 : la borne vaut rayon*2 + 3 (MARGE_HALO) - 5 (tolerance), soit
+    # 198 px au rayon clair et 398 px au rayon sombre. Un centre a 300 px
+    # tient dans la premiere et pas dans la seconde.
+    d = _cache(n=60, cx=150.0)              # 300 px en pleine resolution
+    d["radius_dark"] = 200.0                # 400 px, contre 200 pour le clair
+    for f in d["frames"]:
+        f["regime"] = "bright"
+    for i in range(20, 40):
+        d["frames"][i]["regime"] = "dark"
+    r = analyse_verdicts(d, 1080, 1920)
+    assert r["verdicts"][10] is None            # clair : 300 >= 198
+    assert r["verdicts"][30] == "hors_source"   # sombre : 300 < 398
+
+
+def test_a_cache_without_radius_dark_keeps_the_single_bound():
+    """Compatibilite de forme : sans radius_dark ni colonne de regime, la
+    borne est celle d'avant, a l'octet."""
+    d = _cache(n=40)
+    avec = _cache(n=40)
+    avec["radius_dark"] = avec["radius"]
+    for f in avec["frames"]:
+        f["regime"] = "dark"
+    assert (analyse_verdicts(d, 1080, 1920)["verdicts"]
+            == analyse_verdicts(avec, 1080, 1920)["verdicts"])
+
+
+def test_a_missing_regime_counts_as_bright():
+    """Une frame sans regime ne doit pas faire tomber l'analyse ni heriter
+    du rayon sombre par defaut."""
+    d = _cache(n=40, cx=210.0)
+    d["radius_dark"] = 200.0
+    for f in d["frames"]:
+        f["regime"] = None
+    assert all(v is None for v in analyse_verdicts(d, 1080, 1920)["verdicts"])

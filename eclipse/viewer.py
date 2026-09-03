@@ -1164,10 +1164,18 @@ def _reglages_reanalyse(source, cache_path, preset_effectif):
     scale = donnees.get("scale")
     if scale is not None:
         reglages["scale"] = scale
-    rayon = donnees.get("radius")
     largeur_analyse = donnees.get("width")
-    if rayon is not None and largeur_analyse:
-        reglages["radius"] = rayon * probe(source)["width"] / largeur_analyse
+    largeur_source = probe(source)["width"] if largeur_analyse else None
+    # Les DEUX rayons, par le meme chemin. Un cache a vote dual en porte un
+    # par regime (voir pipeline.analyze) : ne reprendre que le clair
+    # laisserait rebalayer le sombre, et le second balayage peut retomber
+    # sur le clair faute de disque sombre a son echantillonnage — c'est-a-
+    # dire REINTRODUIRE la secousse de 24 px que ce rayon existe pour
+    # supprimer.
+    for cle in ("radius", "radius_dark"):
+        rayon = donnees.get(cle)
+        if rayon is not None and largeur_analyse:
+            reglages[cle] = rayon * largeur_source / largeur_analyse
     seuil = (donnees.get("analysis_params") or {}).get("light_threshold")
     if seuil is not None:
         reglages["seuil_lumiere"] = seuil

@@ -68,8 +68,35 @@ from .viewer import sert
 # cx/cy/conf/masse_captee/disk_p90 all change VALUE under non-custom
 # profiles, and even custom caches gain fields: same trap as versions
 # 3-5, a v5 cache re-read silently would leave every profile inert.
-SCHEMA_VERSION = 6
+#
+# Version 7: the cache carries a root "radius_dark", and the dual-vote
+# profiles scan it separately -- the bright vote fits the SOLAR limb, the
+# dark vote the larger LUNAR disc covering it (see
+# locate.locate_center_regime for the measured degeneracy). Every dark
+# frame of a dual cache therefore changes cx/cy/conf, and disk_p90 /
+# limb_sharpness / flare_ratio / masse_captee with them, since they are
+# all sized on the located disc. Same trap as versions 3-6: the field
+# names and shapes do not move, charger_cache validates only the schema
+# and the SOURCE signature, so a v6 cache re-read silently would keep the
+# 24-source-px horizontal shake that this version removes. Non-dual
+# caches merely gain the field, radius_dark repeating radius.
+SCHEMA_VERSION = 7
 FRAMES_ECHANTILLON_RAYON = 300
+
+#: Frames sampled for the DARK-regime radius scan of a dual-vote profile,
+#: spread over the WHOLE video and not over the first
+#: FRAMES_ECHANTILLON_RAYON. That window is exactly what made the defect
+#: invisible: on m2-res_852p totality starts at frame 264, so the 12
+#: samples of frames 0-275 were all bright crescents and the scan could
+#: only ever return the solar radius. The count matches the bright scan's
+#: (300 / 25 = 12 frames): scan_radius costs ~30 votes per frame, so a
+#: dozen is a fixed cost of a few hundred votes per analysis, never per
+#: sequence frame. Frames whose dark peak is weak are dropped by
+#: scan_radius's own confidence filter, which is what lets the sample
+#: span the bright phase too without pulling the median (verified on
+#: synthetic mixtures: 4 bright + 4 dark frames still return the dark
+#: radius to within 0.02 px of the dark-only scan).
+FRAMES_ECHANTILLON_RAYON_SOMBRE = 12
 
 # Fraction de la source couverte par la fenetre de recadrage par defaut.
 # Calibree sur la sequence de reference (1080x1920) : la tache 11 avait choisi
@@ -305,8 +332,42 @@ def _verifie_preset(cache_path, source, donnees, preset, seuil_lumiere=None):
                 f"--seuil-lumiere {seuil_lumiere:g}")
 
 
+def _rayon_regime_sombre(source, lw, lh, info, rayon_clair):
+    """Rayon du disque SOMBRE, balaye sur toute la video.
+
+    Un profil a vote dual mesure deux cercles distincts et a donc besoin de
+    deux rayons ; voir locate.locate_center_regime pour la degenerescence
+    mesuree quand le vote sombre emprunte le rayon clair, et
+    FRAMES_ECHANTILLON_RAYON_SOMBRE pour l'echantillonnage.
+
+    Une seconde passe de decodage a la resolution d'analyse est assumee :
+    elle ne coute que les frames jusqu'au dernier echantillon utile, et la
+    boucle s'arrete des qu'elle les a. C'est le prix de la seule fenetre
+    d'echantillonnage qui puisse VOIR la totalite.
+
+    Repli : scan_radius leve quand aucune frame ne donne de pic sombre
+    exploitable — une eclipse partielle n'a pas de disque sombre du tout.
+    Le rayon clair vaut alors pour les deux regimes, ce qui redonne
+    exactement le comportement anterieur sur ces sequences.
+    """
+    total = max(1, int(info["duration"] * info["fps"]))
+    pas = max(1, total // FRAMES_ECHANTILLON_RAYON_SOMBRE)
+    echantillon = []
+    with FrameReader(source, width=lw, height=lh) as reader:
+        for i, f in enumerate(reader):
+            if i % pas == 0:
+                echantillon.append(f.astype(np.float32).mean(axis=2))
+                if len(echantillon) >= FRAMES_ECHANTILLON_RAYON_SOMBRE:
+                    break
+    try:
+        return scan_radius(echantillon, vote="dark")
+    except ValueError:
+        return rayon_clair
+
+
 def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
-            progression=None, preset="custom", seuil_lumiere=None):
+            progression=None, preset="custom", seuil_lumiere=None,
+            radius_dark=None):
     """Passe 1 : mesure chaque frame et ecrit le cache.
 
     preset : nom de profil d'eclipse (voir presets.PRESET_NAMES). Il choisit
@@ -316,6 +377,13 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     (voir render).
     seuil_lumiere : remplace le seuil de lumiere du profil (voir
     quality.masse_captee).
+
+    radius / radius_dark : rayons EXPLICITES en pleine resolution, pour le
+    regime clair et pour le regime sombre. radius seul vaut pour les DEUX
+    regimes — un ordre de l'utilisateur l'emporte entierement, aucun
+    balayage n'a lieu. radius_dark seul laisse balayer le rayon clair. Pas
+    de drapeau de ligne de commande pour radius_dark : la surface reste
+    minimale, et --radius suffit a reprendre la main sur les deux.
 
     processus : nombre de travailleurs pour le calcul par frame ; par defaut
     1, soit le chemin sequentiel. Le defaut de la BIBLIOTHEQUE est deliberement
@@ -363,13 +431,26 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
         # dimensions d'analyse sont arrondies au pixel pair.
         r = float(radius) * (lw / info["width"])
 
+    # LE RAYON DU REGIME SOMBRE. Second balayage seulement pour un profil a
+    # vote dual, et seulement faute de consigne explicite : partout ailleurs
+    # il repete le rayon clair, ce qui laisse les profils non-dual
+    # bit-identiques (echantillonnage des 300 premieres frames inchange).
+    if radius_dark is not None:
+        r_sombre = float(radius_dark) * (lw / info["width"])
+    elif radius is not None:
+        r_sombre = r                      # l'ordre de l'utilisateur l'emporte
+    elif params["vote"] == "dual":
+        r_sombre = _rayon_regime_sombre(source, lw, lh, info, r)
+    else:
+        r_sombre = r
+
     frames = []
     # closing() libere le pool des que le with est quitte, y compris par une
     # exception : sans lui, une trace retenue garde vivante la frame d'analyze,
     # donc le generateur et son pool avec elle.
     with FrameReader(source, width=lw, height=lh) as reader, \
          closing(applique_travaux(
-             mesure_frame, ((rgb, r, params) for rgb in reader),
+             mesure_frame, ((rgb, r, r_sombre, params) for rgb in reader),
              nb)) as mesures:
         # Le parent decode et distribue ; les travailleurs calculent. Les
         # resultats reviennent dans l'ordre des frames, ce qui rend le cache
@@ -395,10 +476,13 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     if not frames:
         raise ValueError(f"Aucune frame decodee depuis {source}")
     print(f"{len(frames)} frames, rayon apparent estime a {r:.1f} px")
+    if r_sombre != r:
+        print(f"Rayon du disque sombre (totalite) : {r_sombre:.1f} px")
 
     donnees = {"schema": SCHEMA_VERSION, "source": _signature_source(source),
                "preset": preset, "analysis_params": params,
-               "scale": scale, "radius": r, "width": lw, "height": lh,
+               "scale": scale, "radius": r, "radius_dark": r_sombre,
+               "width": lw, "height": lh,
                "fps": info["fps"], "frames": frames}
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(donnees, f)

@@ -253,7 +253,7 @@ def _vote_center(gray, r, sign):
     return cx, cy, min(float(somme / max(wv.sum(), 1e-9)), 1.0)
 
 
-def locate_center(gray, r, vote="bright"):
+def locate_center(gray, r, vote="bright", r_dark=None):
     """Disc center by directed vote; see _vote_center for the method.
 
     vote "dark" flips the normals (p - r*n): on a dark disc ringed by
@@ -262,24 +262,47 @@ def locate_center(gray, r, vote="bright"):
     "dual" evaluates both regimes and returns the sharper peak: the
     crescent -> totality -> crescent transition happens inside a single
     video, each frame must pick for itself.
+
+    r_dark: the radius the DARK regime votes at, see locate_center_regime.
     """
-    return locate_center_regime(gray, r, vote)[0]
+    return locate_center_regime(gray, r, vote, r_dark)[0]
 
 
-def locate_center_regime(gray, r, vote="dual"):
+def locate_center_regime(gray, r, vote="dual", r_dark=None):
     """((cx, cy, conf), regime) — the winning regime alongside the fix.
 
     mesure_frame stores the regime in the cache: quality measures read a
     BRIGHT disc inside the radius but a DARK disc's light lives in the
-    ring outside it (see quality.measure_quality's regime parameter)."""
+    ring outside it (see quality.measure_quality's regime parameter).
+
+    r_dark is the radius the DARK vote uses; None means "the same r",
+    which keeps every historic call byte-identical.
+
+    A DUAL sequence has TWO radii and needs both, because the two regimes
+    do not measure the same circle: the bright vote fits the SOLAR limb,
+    the dark vote fits the LUNAR disc that covers it, and the moon is the
+    larger of the two. Measured on m2-res_852p (a total solar eclipse):
+    solar limb 87-88 analysis px against 93.8 +/- 0.3 for the dark disc,
+    7.3 % apart. Voting the dark regime at the bright radius is not merely
+    imprecise, it is DEGENERATE: a limb point at c + r_true*u votes at
+    c + (r_true - r)*u, so every vote lands on a CIRCLE of radius
+    |r_true - r| = 6.9 px around the true centre instead of on a peak.
+    The accumulator then carried four near-equal maxima (weakest/strongest
+    up to 0.99) and the argmax alternated between x = 113.9 and x = 125.1
+    for a true centre of 119.9 -- 58 horizontal jumps of 24 source px over
+    the totality, at 1.95 jumps per second. Scanned at 93.93 the jumps fall
+    to 2 (both real, at third contact), the peak confidence rises 4.5x
+    (0.095 -> 0.423) and the measured centre lands on ground truth.
+    """
     if vote == "bright":
         return _vote_center(gray, r, +1.0), "bright"
+    r_dark = r if r_dark is None else r_dark
     if vote == "dark":
-        return _vote_center(gray, r, -1.0), "dark"
+        return _vote_center(gray, r_dark, -1.0), "dark"
     if vote != "dual":
         raise ValueError(f"Regime de vote inconnu : {vote!r}")
     bright = _vote_center(gray, r, +1.0)
-    dark = _vote_center(gray, r, -1.0)
+    dark = _vote_center(gray, r_dark, -1.0)
     return (bright, "bright") if bright[2] >= dark[2] else (dark, "dark")
 
 

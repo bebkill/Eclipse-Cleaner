@@ -136,7 +136,7 @@ def test_mesure_frame_rend_les_memes_mesures_que_le_calcul_direct():
     attendu_m = masse_captee(gray, cx, cy, r)
     attendu_p = measure_photometry(rgb, cx, cy, r)
 
-    obtenu = mesure_frame((rgb, r, analysis_params("custom")))
+    obtenu = mesure_frame((rgb, r, r, analysis_params("custom")))
     assert obtenu["cx"] == cx and obtenu["cy"] == cy and obtenu["conf"] == conf
     assert obtenu["q"] == attendu_q
     assert obtenu["m"] == attendu_m or (np.isnan(obtenu["m"]) and np.isnan(attendu_m))
@@ -146,7 +146,7 @@ def test_mesure_frame_rend_les_memes_mesures_que_le_calcul_direct():
 def test_mesure_frame_records_the_winning_regime():
     img = make_totality_frame(w=240, h=240, center=(120.0, 120.0), r=55.0,
                               corona=0.5)
-    mes = mesure_frame((img, 55.0, analysis_params("sun")))
+    mes = mesure_frame((img, 55.0, 55.0, analysis_params("sun")))
     assert mes["regime"] == "dark"
     assert abs(mes["cx"] - 120.0) < 1.5
     assert mes["m"] > 0.8                     # widened capture
@@ -154,7 +154,7 @@ def test_mesure_frame_records_the_winning_regime():
 
 def test_mesure_frame_default_params_reproduce_the_old_behaviour():
     img = make_frame(w=120, h=200, center=(40.0, 100.0), r=25.0)
-    ancien = mesure_frame((img, 25.0, analysis_params("custom")))
+    ancien = mesure_frame((img, 25.0, 25.0, analysis_params("custom")))
     assert ancien["regime"] == "bright"
 
 
@@ -165,3 +165,56 @@ def test_rend_frame_rend_la_meme_image_que_apply_frame():
                           remplissage="bord")
     obtenu = rend_frame((rgb, 100.0, 150.0, 1.2, (120, 200), "bord"))
     assert np.array_equal(obtenu, attendu)
+
+
+def test_mesure_frame_measures_a_dark_frame_at_the_dark_radius():
+    """A dual-vote job carries TWO radii, and the dark regime must use its
+    own -- for the vote AND for everything the vote feeds. On a totality
+    disc of 63 px measured against a bright radius of 55, the vote
+    accumulator degenerates into a ring and the centre lands off truth
+    (see locate.locate_center_regime for the measured mechanism).
+    """
+    img = make_totality_frame(w=200, h=200, center=(100.0, 100.0), r=63.0,
+                              corona=0.5)
+    params = analysis_params("sun")
+    juste = mesure_frame((img, 55.0, 63.0, params))
+    faux = mesure_frame((img, 55.0, 55.0, params))
+    assert juste["regime"] == faux["regime"] == "dark"
+    assert abs(juste["cx"] - 100.0) < 1.5 and abs(juste["cy"] - 100.0) < 1.5
+    assert abs(faux["cx"] - 100.0) > abs(juste["cx"] - 100.0)
+    assert juste["conf"] > faux["conf"]
+
+
+def test_mesure_frame_reads_the_dark_regime_quality_on_the_dark_radius():
+    """The downstream measures follow the winning regime's radius: the
+    dark-regime disk_p90 ring and the widened capture mask are both sized
+    on the disc that was actually located, not on the bright one."""
+    from eclipse.locate import locate_center_regime
+    from eclipse.quality import CORONA_FACTOR, masse_captee, measure_quality
+
+    img = make_totality_frame(w=200, h=200, center=(100.0, 100.0), r=63.0,
+                              corona=0.5)
+    params = analysis_params("sun")
+    gray = img.astype(np.float32).mean(axis=2)
+    (cx, cy, _), regime = locate_center_regime(gray, 55.0, params["vote"],
+                                               63.0)
+    assert regime == "dark"
+    attendu_q = measure_quality(gray, cx, cy, 63.0, regime="dark")
+    attendu_m = masse_captee(gray, cx, cy, CORONA_FACTOR * 63.0,
+                             seuil_lumiere=params["light_threshold"])
+
+    obtenu = mesure_frame((img, 55.0, 63.0, params))
+    assert obtenu["q"] == attendu_q
+    assert obtenu["m"] == attendu_m
+
+
+def test_mesure_frame_keeps_a_bright_frame_on_the_bright_radius():
+    """A bright frame in a dual sequence must be untouched by the dark
+    radius: this is what keeps the partial phases measured as before."""
+    img = make_frame(w=200, h=200, center=(100.0, 100.0), r=55.0, phase=0.5)
+    params = analysis_params("sun")
+    avec = mesure_frame((img, 55.0, 63.0, params))
+    sans = mesure_frame((img, 55.0, 55.0, params))
+    assert avec["regime"] == "bright"
+    assert avec["cx"] == sans["cx"] and avec["cy"] == sans["cy"]
+    assert avec["q"] == sans["q"] and avec["m"] == sans["m"]

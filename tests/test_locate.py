@@ -364,3 +364,59 @@ def test_scan_radius_ignores_empty_frames():
 def test_scan_radius_with_nothing_usable_raises():
     with pytest.raises(ValueError):
         scan_radius([np.zeros((60, 60), np.float32)])
+
+
+def test_dual_vote_takes_a_dark_radius_of_its_own():
+    """The diagnosed defect, in synthetic form. A dual-vote sequence has TWO
+    radii -- the bright solar limb and the larger dark lunar disc -- and the
+    dark vote must use its own. On m2-res_852p the cached radius fitted the
+    solar limb (86.9 px) while the dark disc measured 93.8: every dark vote
+    then landed on a CIRCLE of radius 6.9 px around the true centre instead
+    of on a peak, and the argmax alternated between two wrong modes 6 px
+    either side of truth (58 horizontal jumps of 24 source px).
+    """
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    # At the BRIGHT radius the dark vote is degenerate: the ring accumulator
+    # puts the argmax off the true centre.
+    (faux_x, _, faux_conf), _ = locate_center_regime(tot, 55.0, vote="dual")
+    # At the dark radius it lands, and with a far stronger peak.
+    (cx, cy, conf), regime = locate_center_regime(tot, 55.0, vote="dual",
+                                                  r_dark=63.0)
+    assert regime == "dark"
+    assert abs(cx - 100.0) < 1.5 and abs(cy - 100.0) < 1.5
+    assert conf > faux_conf
+    assert abs(faux_x - 100.0) > abs(cx - 100.0)
+
+
+def test_r_dark_none_keeps_the_single_radius_form():
+    """Byte-identity of the historic call: no r_dark means one radius."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    croissant = gris(make_frame(w=200, h=200, center=(100.0, 100.0),
+                                r=55.0, phase=0.9))
+    for g in (tot, croissant):
+        for vote in ("bright", "dark", "dual"):
+            assert (locate_center_regime(g, 55.0, vote=vote)
+                    == locate_center_regime(g, 55.0, vote=vote, r_dark=None))
+
+
+def test_a_dark_single_vote_honours_r_dark():
+    """vote="dark" is the regime the second radius scan runs under: it must
+    read r_dark too, not the bright radius it is given alongside."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    (cx, _, _), regime = locate_center_regime(tot, 55.0, vote="dark",
+                                              r_dark=63.0)
+    assert regime == "dark" and abs(cx - 100.0) < 1.5
+    assert locate_center_regime(tot, 55.0, vote="dark", r_dark=63.0) \
+        == locate_center_regime(tot, 63.0, vote="dark")
+
+
+def test_a_bright_vote_ignores_r_dark():
+    """The bright regime has nothing to do with the dark radius: passing one
+    must not move a bright measure, or non-dual profiles would shift."""
+    croissant = gris(make_frame(w=200, h=200, center=(100.0, 100.0),
+                                r=55.0, phase=0.5))
+    assert locate_center_regime(croissant, 55.0, vote="bright", r_dark=63.0) \
+        == locate_center_regime(croissant, 55.0, vote="bright")

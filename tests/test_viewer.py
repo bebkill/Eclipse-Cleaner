@@ -25,7 +25,7 @@ from eclipse.viewer import (TAILLE_CORPS_MAX, Porteur, _dossier_png,
                             construit_etat, fabrique_handler,
                             nb_frames_estime, sert, work_folder)
 from eclipse.vignettes import _marqueur, chemin_vignette, compte, genere
-from tests.synth import make_frame
+from tests.synth import make_frame, make_totality_frame
 
 
 def _cree_video(tmp_path, nom="src.mp4"):
@@ -3919,3 +3919,44 @@ def test_video_reversed_range_falls_back_to_the_full_body(serveur):
     assert statut == 200
     assert corps == contenu
     assert "Content-Range" not in entetes
+
+
+def test_reanalysis_settings_carry_the_dark_radius(tmp_path):
+    """« Refaire l'analyse » ne doit pas pouvoir REINTRODUIRE la secousse.
+
+    Un cache dual porte deux rayons ; ne reprendre que le clair ferait
+    rebalayer le sombre — ou, pire, le laisserait retomber sur le clair si
+    la sequence rebalayee n'exposait pas de disque sombre a
+    l'echantillonnage. Le rayon sombre suit donc exactement le meme chemin
+    que le clair, conversion en pleine resolution comprise.
+    """
+    src = str(tmp_path / "tot.mp4")
+    with FrameWriter(src, width=200, height=200, fps=30.0) as w:
+        for i in range(30):
+            w.write(make_frame(w=200, h=200, center=(100.0, 100.0), r=55.0,
+                               phase=0.02 * i, halo=0.1))
+        for _ in range(20):
+            w.write(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                        r=63.0, corona=0.5))
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=0.5, preset="sun")
+    with open(cache, encoding="utf-8") as f:
+        donnees = json.load(f)
+    assert donnees["radius_dark"] != pytest.approx(donnees["radius"])
+
+    reglages = viewer._reglages_reanalyse(src, cache, "sun")
+    largeur = probe(src)["width"]
+    # La formule d'analyze, rejouee : le detour par la pleine resolution doit
+    # redonner exactement le rayon sombre que le cache portait.
+    assert (reglages["radius_dark"] * (donnees["width"] / largeur)
+            == pytest.approx(donnees["radius_dark"]))
+    # Et il ne doit pas etre confondu avec le rayon clair.
+    assert reglages["radius_dark"] != pytest.approx(reglages["radius"])
+
+
+def test_reanalysis_settings_drop_the_dark_radius_on_preset_change(tmp_path):
+    src = _cree_video(tmp_path)
+    cache = str(tmp_path / "a.json")
+    analyze(src, cache, scale=1.0, preset="custom")
+    autres = viewer._reglages_reanalyse(src, cache, "moon")
+    assert "radius_dark" not in autres

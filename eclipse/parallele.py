@@ -116,26 +116,41 @@ def applique(fonction, travaux, processus, bloc=None):
 
 
 def mesure_frame(travail):
-    """Mesures d'une frame, pour la passe 1. travail = (rgb, rayon, params).
+    """Mesures d'une frame, passe 1. travail = (rgb, rayon, rayon_sombre, params).
 
     params: resolved presets.analysis_params dict (vote regime and light
     threshold). The winning regime is returned so the cache can carry it:
     quality reads a bright disc inside r but a dark disc's light lives in
     the corona ring (see quality.measure_quality / CORONA_FACTOR).
 
+    rayon_sombre is the radius the DARK regime works at, and a dual-vote
+    sequence needs its own: the bright vote fits the solar limb, the dark
+    vote the larger lunar disc covering it (see
+    locate.locate_center_regime for the measured degeneracy). It sizes
+    everything the dark regime feeds -- the vote, the disk_p90 ring, the
+    widened capture mask -- and is simply equal to rayon outside dual
+    profiles, which leaves them byte-identical.
+
+    La photometrie reste sur le rayon CLAIR dans les deux regimes : elle ne
+    mesure que la partie eclairee au-dela de la moitie du p99 du disque
+    (voir photometry.measure_photometry), et l'interieur d'un disque sombre
+    n'en contient rien a l'un ou l'autre rayon.
+
     Rend les valeurs BRUTES : c'est l'appelant qui les met en forme pour le
     cache (voir pipeline._ou_none). La fonction reste ainsi purement
     calculatoire, ce qui la rend testable seule et remplacable par un backend
     accelere.
     """
-    rgb, rayon, params = travail
+    rgb, rayon, rayon_sombre, params = travail
     gray = rgb.astype(np.float32).mean(axis=2)
-    (cx, cy, conf), regime = locate_center_regime(gray, rayon,
-                                                  params["vote"])
-    capture_radius = rayon * (CORONA_FACTOR if regime == "dark" else 1.0)
+    (cx, cy, conf), regime = locate_center_regime(gray, rayon, params["vote"],
+                                                  rayon_sombre)
+    sombre = regime == "dark"
+    rayon_regime = rayon_sombre if sombre else rayon
+    capture_radius = rayon_regime * (CORONA_FACTOR if sombre else 1.0)
     return {
         "cx": cx, "cy": cy, "conf": conf, "regime": regime,
-        "q": measure_quality(gray, cx, cy, rayon, regime=regime),
+        "q": measure_quality(gray, cx, cy, rayon_regime, regime=regime),
         "m": masse_captee(gray, cx, cy, capture_radius,
                           seuil_lumiere=params["light_threshold"]),
         "p": measure_photometry(rgb, cx, cy, rayon),

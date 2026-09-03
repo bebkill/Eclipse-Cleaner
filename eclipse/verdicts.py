@@ -84,7 +84,18 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # les verdicts de classify() puis on relance le nettoyage d'ilots, qui
     # peut reveler de nouvelles plages trop courtes que classify() ne
     # pouvait pas voir sans connaitre ces rejets.
-    rayon_visible = donnees["radius"] * kx + MARGE_HALO
+    # UN RAYON PAR FRAME, celui du regime qu'elle a mesure. Un cache dual
+    # porte deux rayons — le limbe solaire et le disque lunaire, plus grand,
+    # qui le couvre (voir locate.locate_center_regime) — et la borne
+    # hors_source parle du DISQUE : la calculer sur le rayon clair pour une
+    # frame de totalite mesurerait le mauvais cercle. Hors dual les deux
+    # rayons sont egaux et le tableau est constant, donc la borne est celle
+    # d'avant, a l'octet. Un cache anterieur sans radius_dark, ou une frame
+    # sans regime, comptent pour clair.
+    rayon_clair = float(donnees["radius"])
+    rayon_sombre = float(donnees.get("radius_dark") or rayon_clair)
+    sombre = np.array([f.get("regime") == "dark" for f in frames], dtype=bool)
+    rayon_visible = np.where(sombre, rayon_sombre, rayon_clair) * kx + MARGE_HALO
     hors = verdicts_hors_source(scx * kx, scy * ky, rayon_visible,
                                 src_w, src_h, tolerance_bord)
 

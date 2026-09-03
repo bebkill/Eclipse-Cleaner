@@ -312,11 +312,13 @@ def verdicts_hors_source(cx, cy, rayon_visible, src_w, src_h, tolerance):
     ampute. Une tolerance de quelques dizaines de pixels sur un disque de
     798 px reste invisible.
 
-    Les coordonnees sont en pleine resolution source.
+    Les coordonnees sont en pleine resolution source. rayon_visible accepte
+    un scalaire OU un tableau par frame : un cache a vote dual n'a pas le
+    meme rayon visible dans les deux regimes (voir verdicts.analyse_verdicts).
     """
     cx = np.asarray(cx, dtype=np.float64)
     cy = np.asarray(cy, dtype=np.float64)
-    r = float(rayon_visible) - float(tolerance)
+    r = np.asarray(rayon_visible, dtype=np.float64) - float(tolerance)
     ok = (np.isfinite(cx) & np.isfinite(cy)
           & (cx >= r) & (cx <= src_w - r) & (cy >= r) & (cy <= src_h - r))
     return [None if o else "hors_source" for o in ok]
