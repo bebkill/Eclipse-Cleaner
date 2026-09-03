@@ -41,11 +41,16 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
 
     frames = donnees["frames"]
     conf = _colonne(frames, "conf", 0.0)
+    # "bright" par defaut : une frame sans regime (cache anterieur, ou vote
+    # unique) ne doit ni faire tomber classify() ni etre traitee comme une
+    # frame sombre qu'elle n'a jamais mesuree.
+    regime = np.array([f.get("regime") or "bright" for f in frames])
     verdicts = classify(_colonne(frames, "disk_p90", 0.0),
                         _colonne(frames, "limb_sharpness", 0.0),
                         _colonne(frames, "flare_ratio", 1e9),
                         conf, seuils,
-                        level=_colonne(frames, "level", 0.0))
+                        level=_colonne(frames, "level", 0.0),
+                        regime=regime)
 
     cx = _colonne(frames, "cx")
     cy = _colonne(frames, "cy")

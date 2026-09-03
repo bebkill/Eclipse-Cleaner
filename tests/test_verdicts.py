@@ -192,3 +192,28 @@ def test_a_missing_regime_counts_as_bright():
     for f in d["frames"]:
         f["regime"] = None
     assert all(v is None for v in analyse_verdicts(d, 1080, 1920)["verdicts"])
+
+
+def test_analyse_verdicts_passe_le_regime_a_classify():
+    """La reference de nettete de classify() doit etre scindee par regime
+    (voir quality.classify), et analyse_verdicts est ce qui lui fournit la
+    colonne : sans elle, une frame claire normale prise dans un flottement
+    de regime pres d'un long regime sombre bien plus net est lue comme
+    floue -- exactement le defaut mesure sur m2-res_852p entre les frames
+    250 et 309."""
+    n = 1000
+    d = _cache(n=n)
+    for f in d["frames"]:
+        f["limb_sharpness"] = 100.0
+        f["regime"] = "bright"
+    for depart in range(260, 320, 12):
+        for i in range(depart, depart + 6):
+            d["frames"][i]["limb_sharpness"] = 1000.0
+            d["frames"][i]["regime"] = "dark"
+    for i in range(320, n):
+        d["frames"][i]["limb_sharpness"] = 1000.0
+        d["frames"][i]["regime"] = "dark"
+
+    verdicts = analyse_verdicts(d, 1080, 1920)["verdicts"]
+    zone = [i for i in range(260, 320) if d["frames"][i]["regime"] == "bright"]
+    assert all(verdicts[i] is None for i in zone)

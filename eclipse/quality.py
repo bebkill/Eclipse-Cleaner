@@ -276,14 +276,61 @@ def masse_captee(gray, cx, cy, r, seuil_lumiere=SEUIL_LUMIERE):
     return float(g[lumiere & dedans].sum()) / masse
 
 
+def _fenetre_impaire(n, largeur):
+    """La regle de fenetre impaire de classify, factorisee : bornee a n,
+    toujours impaire, jamais nulle."""
+    k = min(largeur, n if n % 2 == 1 else n - 1)
+    return max(k if k % 2 == 1 else k - 1, 1)
+
+
+def _reference_par_regime(valeurs, largeur, regime):
+    """Reference locale (mediane glissante), scindee par regime de vote.
+
+    regime absent, ou un seul regime present sur toute la sequence :
+    reproduit rolling_median(valeurs, ...) globale, a l'octet -- c'est ce
+    qui garde le preset custom (vote unique) inchange.
+
+    Les deux regimes MELANGES dans une seule fenetre, c'est le defaut
+    mesure sur m2-res_852p : le clair (nettete mediane 196) et le sombre
+    (nettete mediane 385) alternent 9 fois entre les frames 250 et 299, et
+    une frame claire normale (nettete ~196, pas floue) se retrouve jugee a
+    l'aune d'une reference gonflee par ses voisines sombres. On scinde donc
+    la sequence en deux sous-suites (une par regime, ordre temporel
+    preserve), on calcule la mediane glissante de CHACUNE avec la meme
+    regle de fenetre impaire mais dimensionnee a SA PROPRE longueur, puis
+    on redistribue le resultat aux positions d'origine.
+    """
+    valeurs = np.asarray(valeurs, dtype=np.float64)
+    n = len(valeurs)
+    modes = () if regime is None else np.unique(np.asarray(regime))
+    if len(modes) < 2:
+        return rolling_median(valeurs, _fenetre_impaire(n, largeur))
+    regime = np.asarray(regime)
+    ref = np.empty(n, dtype=np.float64)
+    for mode in modes:
+        idx = np.flatnonzero(regime == mode)
+        sous = valeurs[idx]
+        ref[idx] = rolling_median(sous, _fenetre_impaire(len(sous), largeur))
+    return ref
+
+
 def classify(disk_p90, limb_sharpness, flare_ratio, confiance, seuils=None,
-             level=None):
+             level=None, regime=None):
     """Verdict par frame : motif de rejet, ou None si conservee.
 
     Chaque mesure est comparee a sa mediane glissante plutot qu'a un seuil
     absolu. La nettete passe de ~13 a ~150 a la frame 1050 de la video reelle,
     a cause du changement d'exposition : un seuil global rejetterait toute la
     premiere moitie de la sequence.
+
+    regime, s'il est fourni ET que les DEUX regimes apparaissent, calcule
+    ref_p90/ref_sharp/ref_flare PAR REGIME plutot que sur toute la sequence
+    (voir _reference_par_regime) : un cache a vote unique, ou un regime
+    absent, reste identique a l'octet. La reference COURTE du niveau
+    (fenetre_niveau) reste volontairement GLOBALE, meme ici : les paliers
+    d'exposition qu'elle doit suivre (voir plus bas) sont un phenomene de
+    la CAMERA, pas du regime de vote, et scinder cette reference-la
+    n'apporterait rien.
 
     level, s'il est fourni, ajoute le verdict « niveau_aberrant » : une frame
     dont la luminance s'ecarte trop de sa mediane locale. Facultatif pour que
@@ -297,11 +344,9 @@ def classify(disk_p90, limb_sharpness, flare_ratio, confiance, seuils=None,
     conf = np.nan_to_num(np.asarray(confiance, dtype=np.float64), nan=0.0)
     n = len(p90)
 
-    k = min(s["fenetre_ref"], n if n % 2 == 1 else n - 1)
-    k = max(k if k % 2 == 1 else k - 1, 1)
-    ref_p90 = rolling_median(p90, k)
-    ref_sharp = rolling_median(sharp, k)
-    ref_flare = rolling_median(flare, k)
+    ref_p90 = _reference_par_regime(p90, s["fenetre_ref"], regime)
+    ref_sharp = _reference_par_regime(sharp, s["fenetre_ref"], regime)
+    ref_flare = _reference_par_regime(flare, s["fenetre_ref"], regime)
 
     trop_sombre = (p90 < s["dark_rel"] * ref_p90) | (p90 < s["dark_abs"])
     pas_de_lock = conf < s["conf_min"]

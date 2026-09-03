@@ -169,6 +169,59 @@ def test_les_seuils_sont_surchargeables():
     assert classify(p90, sharp, flare, conf, seuils)[310] == "too_dark"
 
 
+def test_classify_reference_par_regime_evite_les_faux_rejets_a_une_frontiere():
+    """The vote regime flaps near a boundary (measured on m2-res_852p: 9
+    switches between frames 250 and 299) right before settling into a long
+    stable stretch of the OTHER, much sharper regime (its totality, median
+    limb sharpness 385 against the bright phase's 196). A single rolling
+    reference mixes both, and its window -- already half full of the huge
+    stable stretch ahead -- reads a normal bright frame (sharp at ITS OWN
+    regime's normal level) as blurry. Splitting the reference per regime
+    removes the false rejection; these frames were never blurry.
+    """
+    n = 1000
+    sharp = np.full(n, 100.0)              # bright regime's own normal level
+    regime = np.array(["bright"] * n, dtype=object)
+    for depart in range(260, 320, 12):     # 5 short dark runs, flapping
+        sharp[depart:depart + 6] = 1000.0
+        regime[depart:depart + 6] = "dark"
+    sharp[320:] = 1000.0                   # then a long, stable dark stretch
+    regime[320:] = "dark"
+    p90, flare, conf = np.full(n, 200.0), np.full(n, 0.05), np.full(n, 0.5)
+
+    sans_regime = classify(p90, sharp, flare, conf)
+    avec_regime = classify(p90, sharp, flare, conf, regime=regime)
+
+    # The bright-labeled frames inside the flapping zone: their own value
+    # (100) never changes: any rejection is a false one.
+    zone = [i for i in range(260, 320) if regime[i] == "bright"]
+    assert any(sans_regime[i] == "motion_blur" for i in zone), (
+        "le montage ne demontre pas la degradation attendue sans regime")
+    assert all(avec_regime[i] is None for i in zone)
+
+
+def test_classify_un_seul_regime_reste_identique_a_l_octet():
+    """A regime column present but constant (no dual-vote video, or a
+    single-regime stretch) must not perturb anything: classify(regime=...)
+    then equals classify() bit for bit."""
+    p90, sharp, flare, conf = _sequence_nominale()
+    sharp[200:210] = 5.0
+    regime = np.array(["bright"] * len(sharp), dtype=object)
+    sans = classify(p90, sharp, flare, conf)
+    avec = classify(p90, sharp, flare, conf, regime=regime)
+    assert avec == sans
+
+
+def test_classify_sans_colonne_regime_reste_identique_a_l_octet():
+    """regime=None (the default, and every caller before this fix) must
+    stay byte-identical: this is what keeps the custom preset's verdicts
+    unchanged (see the byte-identity gate on the reference video)."""
+    p90, sharp, flare, conf = _sequence_nominale()
+    p90[300:320] = 40.0
+    assert classify(p90, sharp, flare, conf) == classify(
+        p90, sharp, flare, conf, regime=None)
+
+
 def test_hors_source_accepte_un_disque_entier():
     assert verdicts_hors_source([540.], [960.], 399., 1080, 1920, 25.) == [None]
 
