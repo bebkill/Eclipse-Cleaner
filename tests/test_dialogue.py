@@ -466,22 +466,25 @@ def test_on_macos_a_user_cancel_is_recognized_by_the_dash_128_code(monkeypatch):
 
 def test_a_dash_128_substring_in_an_unrelated_code_is_not_a_cancel(monkeypatch):
     """LOOSE MATCH TIGHTENED. Matching the bare digits "-128" would also
-    catch an unrelated OSStatus that merely contains that substring (e.g.
-    -1280), silently turning a real failure into a cancel. Only the
-    parenthesized form osascript actually emits, "(-128)", counts -- so an
-    unrelated error like this one (-1728, chosen because it does not embed
-    "(-128)" either) must still raise Indisponible."""
+    catch an unrelated OSStatus that merely contains that substring --
+    -1280 does, digit for digit, without being the cancel code -- silently
+    turning a real failure into a cancel. Only the parenthesized form
+    osascript actually emits, "(-128)", counts: "(-1280)" contains the
+    bare substring "-128" but not "(-128)", so the old loose match would
+    have wrongly returned None here, and this must still raise
+    Indisponible."""
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
 
     def faux_run(commande, capture_output, text, timeout):
-        return subprocess.CompletedProcess(commande, 1, stdout="",
-                                           stderr="error -1728 occurred")
+        return subprocess.CompletedProcess(
+            commande, 1, stdout="",
+            stderr="execution error: some failure (-1280)")
 
     monkeypatch.setattr(subprocess, "run", faux_run)
     with pytest.raises(Indisponible) as exc:
         choisit_video()
-    assert "-1728" in str(exc.value)
+    assert "-1280" in str(exc.value)
 
 
 def test_on_macos_a_real_osascript_failure_raises_indisponible(monkeypatch):
