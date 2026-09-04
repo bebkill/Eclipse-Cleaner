@@ -21,7 +21,7 @@ Ideas and improvements under consideration, mostly coming from user feedback. No
 
 ## Viewer
 
-- **Dynamic cropping (ROI).** Choose the position, size and rotation of the crop window visually in the viewer instead of `--taille` on the command line. A working prototype exists in [@mireianievas' fork](https://github.com/mireianievas/Eclipse-Cleaner) — see [#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1) — along with a macOS fix for the file-selection dialog; integration is planned.
+- **Dynamic cropping (ROI). Partly shipped.** The crop window's *size* is now under mouse control in the viewer — drag the handle on the central thumbnail's crop frame, or reset it to the recommendation — and used exactly as `--taille` would be, without touching the command line. Its *position* stays deliberately automatic: the window follows the tracked disk, and that tracking is the point of the whole pipeline, so there is no manual-position control and none is planned. *Manual rotation* was not carried over either, for the same reason: nothing in this project's own footage has needed a tilted crop yet. Both remain open to a new issue if a real case shows up. This built on [@mireianievas' fork](https://github.com/mireianievas/Eclipse-Cleaner), a working prototype of a fully manual crop (position, size and rotation) that first showed the need — see [#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1). Her fork also diagnosed and fixed the macOS file-selection dialog crash; that fix is integrated (co-authored).
 
 ## Command line
 

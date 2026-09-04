@@ -89,6 +89,8 @@ Everything the page derives from a video — the analysis cache, your review dec
 
 Under the render button, the **stabilize color** checkbox (on by default) removes the frame-to-frame white-balance oscillations of automatic exposure, toward the sequence's own tint — never toward neutral. Its collapsible **parameters** section holds the fine-tuning: the tint-reference *window* (typical: 31 frames, capped at the sequence length — beyond that the reference saturates and a larger window changes nothing) and the *max correction* per channel (typical: 0.25, i.e. ±25 %). Brightness is always normalized, checkbox or not. Changing a parameter marks an existing render as *to redo*, so the banner never claims a stale output is current.
 
+The central thumbnail shows the **crop frame**: the exact rectangle the render will cut out of the current frame. Its *position* is always automatic — it follows the tracked disk, so there is nothing to place by hand — but its *size* can be dragged from the handle in its bottom-right corner, staying centered and locked to the output's aspect ratio. A label under the thumbnail reads **auto** or **custom (W×H)**, with a ↺ button to snap back to the recommended size. The choice is remembered per video (in its work folder) and is exactly what the render uses, the same value `--taille` would set from the command line.
+
 Between steps 2 and 3, **review the sorting**: the timeline shows kept frames in green, rejected ones in red, your own overrides in blue. Press `k` on any frame to keep or discard it — each change is saved immediately, and the render applies your decisions automatically.
 
 | Key | Effect |
@@ -180,7 +182,7 @@ For a **custom analysis**, or to understand what moving a preset's own defaults 
 - **On a partial-only solar video, automatic detection selects the `sun` preset**, whose sorting is slightly stricter than the historic (`custom`) behavior — 1661 vs. 1726 frames kept on the reference sequence. Pass `--preset custom` to reproduce the exact pre-preset result.
 - **Two color renditions can coexist in one film** if a solar filter was removed mid-sequence. That is what really happened in front of the camera, so it is kept, like cloud crossings.
 - The viewer's **Browse…** dialog needs a graphical session (it uses the system file dialog via `tkinter`). On a headless machine, pass the video path on the command line instead.
-- On **macOS**, the Browse… dialog is disabled for now: opening it from the viewer would crash Python (macOS only allows system windows on the main thread — see [#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)). Pass the video path on the command line instead: `python -m eclipse viewer path/to/video.mp4`. A native macOS dialog is planned ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)).
+- On **macOS**, the Browse… dialog now opens through the system's native panel (`osascript`), which sidesteps the main-thread crash the viewer used to hit there ([#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)) — see [acknowledgments](#acknowledgments). The command-line fallback still applies on the rare system where `osascript` itself is unavailable: `python -m eclipse viewer path/to/video.mp4`.
 - The test suite is developed on **Windows**; four Windows-specific tests skip themselves automatically on Linux/macOS.
 
 What's being considered next (SER input, raw Bayer AVI, choice of output format…) lives in the [roadmap](ROADMAP.md).
@@ -201,6 +203,10 @@ This program saved my video, and I hope it can help other eclipse chasers in the
 And if, like me, it rescued your eclipse video, you can support the project:
 
 <a href="https://www.buymeacoffee.com/bebkill"><img src="https://img.shields.io/badge/☕%20Buy%20Me%20a%20Coffee-thank%20you!-yellow?style=for-the-badge" alt="Buy Me a Coffee"></a>
+
+## Acknowledgments
+
+Thanks to [@mireianievas](https://github.com/mireianievas) ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)), who diagnosed the macOS crash in the Browse… dialog and prototyped the `osascript` fix now shipping (co-authored), and who first prototyped dynamic cropping in her fork — the prompt behind the crop-frame control described above.
 
 ## License
 

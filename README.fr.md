@@ -89,6 +89,8 @@ Tout ce que la page dérive d'une vidéo — le cache d'analyse, vos décisions 
 
 Sous le bouton de rendu, la case **stabiliser la couleur** (cochée par défaut) supprime les oscillations de balance des blancs de l'exposition automatique, vers la teinte propre de la séquence — jamais vers le neutre. Sa section dépliable **paramètres** porte les réglages fins : la *fenêtre* de la référence de teinte (typique : 31 images, plafonnée au nombre d'images de la séquence — au-delà la référence sature et agrandir la fenêtre ne change plus rien) et la *correction max* par canal (typique : 0,25, soit ±25 %). La luminosité, elle, est toujours normalisée, case cochée ou non. Changer un paramètre marque le rendu existant « à refaire » : le bandeau ne présente jamais une sortie périmée comme à jour.
 
+La vignette centrale affiche le **cadrage** : le rectangle exact que le rendu va découper dans l'image courante. Sa *position* reste toujours automatique — elle suit le disque repéré, il n'y a donc rien à placer à la main — mais sa *taille* se tire par la poignée posée dans son coin bas-droit, en restant centrée et au rapport de la sortie. Un libellé sous la vignette indique **auto** ou **personnalisé (L×H)**, avec un bouton ↺ pour revenir au cadrage recommandé. Le choix est mémorisé par vidéo (dans son dossier de travail) et c'est exactement lui que le rendu utilise, la même valeur que `--taille` fixerait en ligne de commande.
+
 Entre les étapes 2 et 3, **revoyez le tri** : la timeline montre les frames conservées en vert, les écartées en rouge, vos propres corrections en bleu. La touche `k` conserve ou écarte la frame courante — chaque bascule est enregistrée immédiatement, et le rendu applique vos décisions automatiquement.
 
 | Touche | Effet |
@@ -177,7 +179,7 @@ Pour une **analyse personnalisée**, ou pour comprendre l'effet d'un écart aux 
 - **Sur une vidéo solaire partielle seulement, la détection automatique choisit le preset `sun`**, dont le tri est légèrement plus strict que le comportement historique (`custom`) — 1661 frames conservées contre 1726 sur la séquence de référence. Passez `--preset custom` pour reproduire exactement le résultat d'avant les presets.
 - **Deux rendus colorimétriques peuvent cohabiter dans un même film** si un filtre solaire a été retiré en cours de séquence. C'est ce qui s'est réellement passé devant la caméra, donc c'est conservé, au même titre que les traversées nuageuses.
 - Le bouton **Parcourir…** du viewer a besoin d'une session graphique (il utilise la boîte de dialogue du système via `tkinter`). Sur une machine sans affichage, passez le chemin de la vidéo en argument.
-- Sous **macOS**, le bouton Parcourir… est désactivé pour l'instant : l'ouvrir depuis le viewer ferait planter Python (macOS n'autorise les fenêtres système que depuis le fil principal — voir [#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)). Passez le chemin de la vidéo en argument : `python -m eclipse viewer chemin/vers/video.mp4`. Une boîte de dialogue native macOS est prévue ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)).
+- Sous **macOS**, le bouton Parcourir… s'ouvre désormais via le panneau natif du système (`osascript`), ce qui évite le plantage sur le fil principal que le viewer subissait auparavant ([#4](https://github.com/bebkill/Eclipse-Cleaner/issues/4)) — voir les [remerciements](#remerciements). Le repli en ligne de commande reste valable sur le rare système où `osascript` lui-même est indisponible : `python -m eclipse viewer chemin/vers/video.mp4`.
 - La suite de tests est développée sous **Windows** ; quatre tests propres à Windows se sautent automatiquement sous Linux/macOS.
 
 Ce qui est à l'étude pour la suite (entrée SER, AVI brut Bayer, choix du format de sortie…) se trouve dans la [feuille de route](ROADMAP.fr.md).
@@ -198,6 +200,10 @@ Ce programme a sauvé ma vidéo, et j'espère qu'il pourra aider d'autres chasse
 Et si, comme pour moi, il a permis de sauver votre vidéo, vous pouvez soutenir le projet :
 
 <a href="https://www.buymeacoffee.com/bebkill"><img src="https://img.shields.io/badge/☕%20Buy%20Me%20a%20Coffee-merci%20!-yellow?style=for-the-badge" alt="Buy Me a Coffee"></a>
+
+## Remerciements
+
+Merci à [@mireianievas](https://github.com/mireianievas) ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)), qui a diagnostiqué le plantage macOS de la boîte Parcourir… et prototypé le correctif `osascript` désormais livré (co-auteure), et qui a prototypé la première le recadrage dynamique dans son fork — l'idée à l'origine du cadrage décrit plus haut.
 
 ## Licence
 

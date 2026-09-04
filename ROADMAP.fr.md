@@ -21,7 +21,7 @@ Idées et améliorations à l'étude, venues pour la plupart des retours d'utili
 
 ## Viewer
 
-- **Recadrage dynamique (ROI).** Choisir la position, la taille et la rotation de la fenêtre de recadrage visuellement dans le viewer plutôt que par `--taille` en ligne de commande. Un prototype fonctionnel existe dans [le fork de @mireianievas](https://github.com/mireianievas/Eclipse-Cleaner) — voir [#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1) — accompagné d'un correctif macOS pour la boîte de sélection de fichier ; l'intégration est prévue.
+- **Recadrage dynamique (ROI). Partiellement livré.** La *taille* de la fenêtre de recadrage se pilote désormais à la souris dans le viewer — poignée sur le cadre posé sur la vignette centrale, ou retour au recommandé — et sert exactement comme le ferait `--taille`, sans toucher à la ligne de commande. Sa *position* reste volontairement automatique : la fenêtre suit le disque repéré, et ce suivi est la raison d'être du pipeline ; il n'y a donc pas de contrôle de position manuel, et aucun n'est prévu. La *rotation manuelle* n'a pas non plus été reprise, pour la même raison : rien dans les vidéos traitées jusqu'ici n'a exigé un cadrage incliné. Les deux restent ouverts à une nouvelle issue si un cas réel se présente. Ce travail s'appuie sur [le fork de @mireianievas](https://github.com/mireianievas/Eclipse-Cleaner), un prototype fonctionnel de recadrage entièrement manuel (position, taille et rotation) qui en a montré le premier le besoin — voir [#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1). Son fork a aussi diagnostiqué et corrigé le plantage de la boîte de sélection de fichier sous macOS ; ce correctif est intégré (co-auteure).
 
 ## Ligne de commande
 
