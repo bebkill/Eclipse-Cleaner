@@ -76,8 +76,17 @@ def analyse_verdicts(donnees, src_w, src_h, seuils=None,
     # CLI flag for it, an operator reaches it only through a preset or an
     # explicit --seuils override.
     capt = _colonne(frames, "masse_captee", 0.0)
-    mesure_ok = (np.isfinite(cx) & (capt >= seuil_masque)
-                & (conf >= s_merged["conf_ancre"]))
+    # conf_ancre gates the BRIGHT vote's confidence scale only (see
+    # quality.SEUILS_DEFAUT's conf_ancre comment). The bright and dark
+    # accumulators do not share a scale: on m2-res_852p six dark-regime
+    # frames at third contact (1174-1179) measure correctly (0.0-0.2 px
+    # error) at conf 0.030-0.035, but the sun preset's conf_ancre (0.04,
+    # calibrated on the bright vote) discarded them, forcing smooth_track
+    # to bridge to a neighbor ~200 px off (a 6x17 px window slide plus a
+    # 154 px snap at third contact). The dark regime already has its own
+    # gate above (masse_captee): a dark frame gets no confidence floor here.
+    conf_ok = np.where(regime == "dark", True, conf >= s_merged["conf_ancre"])
+    mesure_ok = np.isfinite(cx) & (capt >= seuil_masque) & conf_ok
 
     # kx/ky convertissent les coordonnees d'analyse en coordonnees SOURCE
     # pleine resolution — jamais en coordonnees de sortie, qui ne sont plus

@@ -37,6 +37,24 @@ SEUILS_DEFAUT = {
     # garbage center at masse_captee 1.0 -- is specific to the sun preset's
     # exposure-catastrophe transitions (see presets.sort_defaults), so it
     # ships scoped there instead of here.
+    #
+    # This floor gates the BRIGHT vote's confidence scale ONLY (see
+    # verdicts.analyse_verdicts's mesure_ok): the bright and dark
+    # accumulators do not share a scale, and applying the bright-calibrated
+    # 0.04 to a dark-regime row is itself a measured failure, not a
+    # hypothetical one. On m2-res_852p, third-contact frames 1174-1179
+    # measure correctly in the dark regime (0.0-0.2 px error) at conf
+    # 0.030-0.035, comfortably above the dark regime's own gate
+    # (masse_captee) but below the bright-scaled 0.04 -- discarding them
+    # forced smooth_track to bridge to frame 1184, ~200 px off, producing a
+    # 6x17 px window slide plus a 154 px snap at third contact. Scoping the
+    # floor to bright-regime frames fixed it: the third-contact zone's path
+    # dropped from 277.9 to 77.6 px, and whole-video kept-frame window jumps
+    # over 10 px fell from 14 to 8 (m2, user decisions and output size, pass
+    # 2 only). The dark regime needs no floor of its own here because
+    # masse_captee already rejects its garbage (the black frames 1180-1183
+    # score masse_captee 0.000): measured, dark floors 0.030, 0.020, 0.010
+    # and 0.0 all give identical verdicts on this video.
     "conf_ancre": 0.0,
     # Ecart maximal du niveau a sa mediane locale, en fraction. A 0,35 une
     # seule frame de la sequence reelle est ecartee (la 184 : niveau 36,3

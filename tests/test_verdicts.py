@@ -232,6 +232,38 @@ def test_an_unlocked_vote_does_not_anchor_under_the_sun_preset():
     assert abs(r["traj_x"][20] - 540.0) < 1.0       # interpolated from neighbors
 
 
+def test_a_dark_regime_row_anchors_below_the_sun_preset_floor():
+    """The sun preset's conf_ancre (0.04) is calibrated on the BRIGHT vote's
+    confidence scale (see presets.sort_defaults). The dark accumulator does
+    not share that scale: on m2-res_852p, third-contact frames 1174-1179
+    measure correctly (0.0-0.2 px error) at conf 0.030-0.035, below 0.04 but
+    with nothing wrong with them. The floor must not apply to a dark-regime
+    row -- it is gated on masse_captee instead (see verdicts.analyse_verdicts's
+    mesure_ok)."""
+    d = _cache(n=41)
+    d["preset"] = "sun"
+    d["frames"][20]["regime"] = "dark"
+    d["frames"][20]["masse_captee"] = 1.0
+    d["frames"][20]["conf"] = 0.03            # below conf_ancre (0.04)
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 800.0) < 1.0       # anchors on itself
+
+
+def test_a_bright_regime_row_still_does_not_anchor_under_the_sun_preset():
+    """Mirrors the dark-regime case above: a bright-regime row at the same
+    conf 0.03 must still be discarded and interpolated, exactly as before
+    this change -- the floor keeps gating the vote it was calibrated on."""
+    d = _cache(n=41)
+    d["preset"] = "sun"
+    d["frames"][20]["regime"] = "bright"
+    d["frames"][20]["masse_captee"] = 1.0
+    d["frames"][20]["conf"] = 0.03            # below conf_ancre (0.04)
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 540.0) < 1.0       # interpolated from neighbors
+
+
 def test_the_same_low_confidence_row_still_anchors_under_custom():
     """conf_ancre defaults to 0.0 everywhere but sun (see
     quality.SEUILS_DEFAUT): M2 found 44 correctly-positioned frames on the

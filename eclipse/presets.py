@@ -82,23 +82,31 @@ _ANALYSIS_DEFAULTS = {
 #
 #   seuils={"conf_ancre": 0.04}: an anchor-confidence floor for the cropping
 #   TRAJECTORY (see verdicts.analyse_verdicts and quality.SEUILS_DEFAUT),
-#   0.0 (off) everywhere else. Three strata measured on m2-res_852p: an
-#   unlocked Hough vote anchors a garbage center (cx as far off as -38.9)
-#   at conf <= 0.0076 (frames 270-279); a photospheric-bead lock -- a real
-#   peak, just on the wrong feature (cx 97 against a true ~120.9, second
-#   contact) -- sits at conf 0.0242-0.0356 (frames 287-293); every good
-#   frame around them (264-269, 274-276, 284-286) sits at conf >= 0.042.
-#   0.02 (the conf_min value, see quality.SEUILS_DEFAUT) only cleared the
-#   first stratum and left the bead anchoring frames 290-293 kept at the
-#   wrong center -- two ~50-130 px jumps in the rendered trajectory at
-#   second contact. 0.04 sits between the bead and the good frames,
-#   clearing both -- but the margin is thin (0.0356 to 0.042, 0.006 wide):
-#   re-measure before raising it further. Collateral, checked across the
-#   whole video: 9 frames (294-296, 1167-1179's tail 1174-1179) drop from
-#   0.02 to under 0.04, all of them already rejected motion_blur under
-#   EITHER floor (never reach the render) and all still correctly
-#   positioned by their own measure -- only a manual viewer recovery of
-#   one of them would notice the interpolated stand-in.
+#   0.0 (off) everywhere else. This floor gates the BRIGHT vote's
+#   confidence scale ONLY -- verdicts.analyse_verdicts applies it to
+#   bright-regime rows and skips it entirely for dark-regime ones, which
+#   are already gated on masse_captee. Three strata measured on
+#   m2-res_852p, all bright regime: an unlocked Hough vote anchors a
+#   garbage center (cx as far off as -38.9) at conf <= 0.0076 (frames
+#   270-279); a photospheric-bead lock -- a real peak, just on the wrong
+#   feature (cx 97 against a true ~120.9, second contact) -- sits at conf
+#   0.0242-0.0356 (frames 287-293); every good frame around them (264-269,
+#   274-276, 284-286) sits at conf >= 0.042. 0.02 (the conf_min value, see
+#   quality.SEUILS_DEFAUT) only cleared the first stratum and left the bead
+#   anchoring frames 290-293 kept at the wrong center -- two ~50-130 px
+#   jumps in the rendered trajectory at second contact. 0.04 sits between
+#   the bead and the good frames, clearing both -- but the margin is thin
+#   (0.0356 to 0.042, 0.006 wide): re-measure before raising it further.
+#   Applying that same bright-calibrated 0.04 to the DARK vote's own,
+#   unrelated confidence scale was itself a measured failure: at third
+#   contact, dark-regime frames 1174-1179 measure correctly (0.0-0.2 px
+#   error) at conf 0.030-0.035, below 0.04 but with nothing wrong with
+#   them, and discarding them forced smooth_track to bridge to frame 1184
+#   (~200 px off) -- a 6x17 px window slide plus a 154 px snap. Scoping the
+#   floor to bright-regime frames fixed it (see verdicts.analyse_verdicts):
+#   the third-contact zone's path fell from 277.9 to 77.6 px, and
+#   whole-video kept-frame window jumps over 10 px fell from 14 to 8 (m2,
+#   user decisions and output size, pass 2 only).
 #   Scoped to sun rather than made universal because a global floor is
 #   measurably wrong even at 0.02: it would flip 44 legitimate,
 #   correctly-positioned frames on the reference custom video and 163 on
