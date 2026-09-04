@@ -203,7 +203,7 @@ Et si, comme pour moi, il a permis de sauver votre vidéo, vous pouvez soutenir 
 
 ## Remerciements
 
-Merci à [@mireianievas](https://github.com/mireianievas) ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)), qui a diagnostiqué le plantage macOS de la boîte Parcourir… et prototypé le correctif `osascript` désormais livré (co-auteure), et qui a prototypé la première le recadrage dynamique dans son fork — l'idée à l'origine du cadrage décrit plus haut.
+Merci à [@mireianievas](https://github.com/mireianievas) ([#1](https://github.com/bebkill/Eclipse-Cleaner/issues/1)), qui a diagnostiqué le plantage macOS de la boîte Parcourir… et prototypé le correctif `osascript` désormais livré (co-auteure), et qui a été la première à prototyper le recadrage dynamique dans son fork — l'idée à l'origine du cadrage décrit plus haut.
 
 ## Licence
 

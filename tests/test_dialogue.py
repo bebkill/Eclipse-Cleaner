@@ -403,7 +403,7 @@ def test_on_macos_osascript_is_tried_before_the_fallback(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
 
-    def faux_run(commande, capture_output, text):
+    def faux_run(commande, capture_output, text, timeout):
         return subprocess.CompletedProcess(
             commande, 0, stdout="/Users/x/eclipse.mp4\n", stderr="")
 
@@ -421,7 +421,7 @@ def test_on_macos_the_type_filter_comes_from_extensions_video(monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
     scripts = []
 
-    def faux_run(commande, capture_output, text):
+    def faux_run(commande, capture_output, text, timeout):
         scripts.append(commande[-1])
         return subprocess.CompletedProcess(commande, 0, stdout="/x.mp4\n",
                                            stderr="")
@@ -442,7 +442,7 @@ def test_on_macos_a_user_cancel_returns_none_via_the_stderr_text(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
 
-    def faux_run(commande, capture_output, text):
+    def faux_run(commande, capture_output, text, timeout):
         return subprocess.CompletedProcess(
             commande, 1, stdout="", stderr="execution error: User canceled. (-128)")
 
@@ -456,12 +456,32 @@ def test_on_macos_a_user_cancel_is_recognized_by_the_dash_128_code(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
 
-    def faux_run(commande, capture_output, text):
+    def faux_run(commande, capture_output, text, timeout):
         return subprocess.CompletedProcess(commande, 1, stdout="",
                                            stderr="(-128)")
 
     monkeypatch.setattr(subprocess, "run", faux_run)
     assert choisit_video() is None
+
+
+def test_a_dash_128_substring_in_an_unrelated_code_is_not_a_cancel(monkeypatch):
+    """LOOSE MATCH TIGHTENED. Matching the bare digits "-128" would also
+    catch an unrelated OSStatus that merely contains that substring (e.g.
+    -1280), silently turning a real failure into a cancel. Only the
+    parenthesized form osascript actually emits, "(-128)", counts -- so an
+    unrelated error like this one (-1728, chosen because it does not embed
+    "(-128)" either) must still raise Indisponible."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text, timeout):
+        return subprocess.CompletedProcess(commande, 1, stdout="",
+                                           stderr="error -1728 occurred")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    with pytest.raises(Indisponible) as exc:
+        choisit_video()
+    assert "-1728" in str(exc.value)
 
 
 def test_on_macos_a_real_osascript_failure_raises_indisponible(monkeypatch):
@@ -473,7 +493,7 @@ def test_on_macos_a_real_osascript_failure_raises_indisponible(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
 
-    def faux_run(commande, capture_output, text):
+    def faux_run(commande, capture_output, text, timeout):
         return subprocess.CompletedProcess(
             commande, 1, stdout="", stderr="not authorized to send Apple events")
 
@@ -490,13 +510,85 @@ def test_on_macos_osascript_missing_at_launch_raises_indisponible(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
 
-    def faux_run(commande, capture_output, text):
+    def faux_run(commande, capture_output, text, timeout):
         raise FileNotFoundError("osascript disparu (simule)")
 
     monkeypatch.setattr(subprocess, "run", faux_run)
     with pytest.raises(Indisponible) as exc:
         choisit_video()
     assert "osascript disparu (simule)" in str(exc.value)
+
+
+def test_on_macos_a_stalled_osascript_raises_indisponible(monkeypatch):
+    """No timeout would let a stalled osascript -- a TCC/Automation prompt
+    hidden behind another window, or Apple events denied outright -- hang
+    the HTTP handler thread forever, with no visible dialog and no way
+    out. subprocess.run is given DELAI_OSASCRIPT_S and TimeoutExpired must
+    turn into the same Indisponible any other infrastructure failure
+    does."""
+    from eclipse.dialogue import DELAI_OSASCRIPT_S
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text, timeout):
+        assert timeout == DELAI_OSASCRIPT_S
+        raise subprocess.TimeoutExpired(commande, timeout)
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    with pytest.raises(Indisponible):
+        choisit_video()
+
+
+def test_on_macos_a_double_quote_in_the_folder_name_is_escaped(monkeypatch):
+    """F1, CRITICAL. A folder name containing a double quote must arrive
+    ESCAPED in the generated AppleScript, or it breaks out of the string
+    literal -- an injection that could run arbitrary AppleScript (e.g. via
+    `do shell script`). The previous code escaped the quote and only then
+    replaced every backslash with "/", which erased the escape it had just
+    inserted; this asserts the fix by inspecting the actual osascript
+    argument, not just the visible behavior."""
+    import os
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+    monkeypatch.setattr(os.path, "isdir", lambda chemin: True)
+    scripts = []
+
+    def faux_run(commande, capture_output, text, timeout):
+        scripts.append(commande[-1])
+        return subprocess.CompletedProcess(commande, 0, stdout="/x.mp4\n",
+                                           stderr="")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    dossier = 'D:/films/a " malicious " folder'
+    choisit_video(dossier)
+    script = scripts[0]
+    # Le guillemet du nom de dossier doit atteindre le script ECHAPPE : sa
+    # forme brute ("a " malicious " folder) romprait le litteral AppleScript
+    # a la premiere occurrence.
+    assert 'a \\" malicious \\" folder' in script
+    assert 'a " malicious " folder' not in script
+
+
+def test_on_macos_the_default_location_clause_uses_the_folder(monkeypatch):
+    """The normal-path case: no quotes to escape, just the expected
+    `default location POSIX file "..."` clause built from dossier_initial."""
+    import os
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+    monkeypatch.setattr(os.path, "isdir", lambda chemin: True)
+    scripts = []
+
+    def faux_run(commande, capture_output, text, timeout):
+        scripts.append(commande[-1])
+        return subprocess.CompletedProcess(commande, 0, stdout="/x.mp4\n",
+                                           stderr="")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    choisit_video("D:/films")
+    assert 'default location POSIX file "D:/films"' in scripts[0]
 
 
 def test_le_message_d_indisponibilite_dit_pourquoi():

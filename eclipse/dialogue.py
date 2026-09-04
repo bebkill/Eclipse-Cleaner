@@ -56,6 +56,15 @@ MESSAGE_MACOS = (
     "this module relies on to avoid the AppKit main-thread restriction, "
     "was not found on this system.")
 
+#: How long osascript may run before this gives up and raises Indisponible
+#: instead of blocking the HTTP handler thread forever. Generous on
+#: purpose: a person can legitimately take a while browsing a file dialog.
+#: What this guards against is a STALLED osascript that never shows a
+#: visible dialog at all -- a TCC/Automation permission prompt hidden
+#: behind another window, or Apple events denied outright -- which would
+#: otherwise hang the request with no way out.
+DELAI_OSASCRIPT_S = 300
+
 #: Raised when osascript IS present but the panel fails to open for a
 #: reason other than the user closing it (permissions, a sandboxed
 #: environment, a malformed script, ...). {detail} carries osascript's own
@@ -100,6 +109,22 @@ def _types_de_fichiers(libelles=None):
             (libelles["boite_filtre_tous"], "*")]
 
 
+def _applescript_echappe(texte):
+    """Escapes a string for embedding inside an AppleScript double-quoted
+    literal ("...").
+
+    Backslash MUST be escaped BEFORE the quote, not after: escaping the
+    quote first and only then doubling every backslash would double the
+    backslash that escaping just inserted in front of the quote, undoing
+    it and leaving the quote UNESCAPED in the generated script. That is an
+    injection, not a cosmetic bug -- a folder name or a title containing a
+    double quote could break out of the string literal and run arbitrary
+    AppleScript, e.g. via `do shell script`. Escaping backslash first and
+    the quote second is the only order that is safe.
+    """
+    return texte.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _choisit_video_macos(titre, dossier_initial):
     """Opens the native macOS panel through osascript ("choose file").
 
@@ -121,24 +146,35 @@ def _choisit_video_macos(titre, dossier_initial):
 
     Renders the chosen path, or None at a user cancel -- AppleScript's
     "choose file" reports that as an error whose text contains "User
-    canceled" or the OSStatus -128, which is how it is told apart here
-    from a genuine failure.
+    canceled" or the OSStatus "(-128)", which is how it is told apart here
+    from a genuine failure. The parentheses in "(-128)" are matched on
+    purpose and not just the bare digits: an unrelated OSStatus that
+    happens to contain the substring "-128" (e.g. -1280) must not be
+    misread as a cancel.
 
     Raises Indisponible if osascript starts but exits non-zero for any
-    OTHER reason, or if it cannot be started at all (missing binary
-    despite the shutil.which check below, no permission, ...): those are
-    infrastructure failures, not a choice the user made, and the HTTP
-    caller (viewer._parcourir) depends on that distinction to turn only
-    the latter into a 503.
+    OTHER reason, if it cannot be started at all (missing binary despite
+    the shutil.which check below, no permission, ...), or if it runs
+    past DELAI_OSASCRIPT_S without answering (a stalled permission prompt
+    hidden behind another window, Apple events denied outright, ...):
+    those are all infrastructure failures, not a choice the user made, and
+    the HTTP caller (viewer._parcourir) depends on that distinction to
+    turn only the latter into a 503.
     """
     import os
     import subprocess
 
     morceaux = ["choose file"]
     if titre:
-        morceaux.append('with prompt "%s"' % titre.replace('"', '\\"'))
+        morceaux.append('with prompt "%s"' % _applescript_echappe(titre))
     if dossier_initial and os.path.isdir(dossier_initial):
-        chemin_pose = dossier_initial.replace('"', '\\"').replace("\\", "/")
+        # Les separateurs sont normalises AVANT l'echappement AppleScript :
+        # un chemin qui porte des antislashs de SEPARATEUR (colle depuis
+        # Windows, environnement de test) n'en a plus une fois convertis en
+        # "/", et il ne reste alors que l'echappement normal a appliquer --
+        # celui qui protege un antislash ou un guillemet appartenant
+        # reellement au nom du dossier.
+        chemin_pose = _applescript_echappe(dossier_initial.replace("\\", "/"))
         morceaux.append('default location POSIX file "%s"' % chemin_pose)
     # Les UTI d'abord : ce sont elles qui font vraiment filtrer le panneau
     # natif par NATURE de fichier. Les extensions restent a cote, une video
@@ -150,7 +186,12 @@ def _choisit_video_macos(titre, dossier_initial):
 
     try:
         resultat = subprocess.run(["osascript", "-e", script],
-                                  capture_output=True, text=True)
+                                  capture_output=True, text=True,
+                                  timeout=DELAI_OSASCRIPT_S)
+    except subprocess.TimeoutExpired as exc:
+        raise Indisponible(MESSAGE_MACOS_OSASCRIPT_ECHEC.format(
+            detail="osascript did not answer within %d s" %
+                  DELAI_OSASCRIPT_S)) from exc
     except OSError as exc:
         # shutil.which l'avait trouve, mais le lancer a quand meme echoue
         # (retire entre-temps, permissions, ...).
@@ -159,7 +200,7 @@ def _choisit_video_macos(titre, dossier_initial):
 
     if resultat.returncode != 0:
         erreur = (resultat.stderr or "").strip()
-        if "User canceled" in erreur or "-128" in erreur:
+        if "User canceled" in erreur or "(-128)" in erreur:
             # La formule d'AppleScript pour « l'utilisateur a ferme le
             # panneau » -- ce n'est pas un echec, voir la docstring.
             return None
