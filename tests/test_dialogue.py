@@ -54,6 +54,8 @@ CE QUI EST PERDU, ET QU'AUCUN TEST DE CE DEPOT NE COUVRE PLUS :
 Ce qui reste couvert, en revanche, l'est sur le vrai code : voir chaque test.
 """
 import builtins
+import shutil
+import subprocess
 import sys
 import threading
 
@@ -61,8 +63,8 @@ import pytest
 
 from eclipse import langues
 from eclipse.dialogue import (EXTENSIONS_VIDEO, MESSAGE_INDISPONIBLE,
-                              MESSAGE_MACOS, Indisponible, _types_de_fichiers,
-                              choisit_video)
+                              MESSAGE_MACOS, MESSAGE_MACOS_OSASCRIPT_ECHEC,
+                              Indisponible, _types_de_fichiers, choisit_video)
 
 tkinter = pytest.importorskip("tkinter")
 
@@ -363,20 +365,24 @@ def test_tkinter_absent_leve_Indisponible(monkeypatch):
         choisit_video()
 
 
-def test_on_macos_the_dialog_is_refused_before_tkinter_is_touched(monkeypatch):
+def test_on_macos_without_osascript_tkinter_is_never_touched(monkeypatch):
     """AppKit only allows windows on the MAIN thread, and choisit_video runs
     in an HTTP handler thread. There, tkinter.Tk() does not raise a TclError
     the except clauses could turn into a status: it ABORTS the whole process
-    (NSInternalInconsistencyException — issue #4, macOS 26). The guard must
-    therefore fire before tkinter is even imported; the bombed Tk proves the
-    call never gets that far, and Indisponible (not AssertionError) proves
-    the refusal takes the same path the page already knows how to display.
+    (NSInternalInconsistencyException — issue #4, macOS 26). osascript (see
+    below) is the real fix, tried first; this is the one case it cannot
+    cover, osascript itself missing, and there is no third way in yet. The
+    guard must therefore fall back before tkinter is even imported; the
+    bombed Tk proves the call never gets that far, and Indisponible (not
+    AssertionError) proves the refusal takes the same path the page already
+    knows how to display.
     """
     def boom():
         raise AssertionError("Tk must never be instantiated on macOS")
 
     monkeypatch.setattr(tkinter, "Tk", boom)
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: None)
     with pytest.raises(Indisponible) as exc:
         choisit_video()
     assert str(exc.value) == MESSAGE_MACOS
@@ -387,6 +393,110 @@ def test_the_macos_message_says_why():
     must name the platform and the reason. The WHAT TO DO is added by the
     page (key "boite_indisponible"), in its own language — not here."""
     assert "macOS" in MESSAGE_MACOS
+
+
+def test_on_macos_osascript_is_tried_before_the_fallback(monkeypatch):
+    """The real fix (issue #1, Mireia Nievas): osascript runs the panel in
+    its own process, so it is reached even though choisit_video runs in the
+    HTTP handler thread that tkinter.Tk() would abort on (see above). A
+    chosen path comes back unchanged."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text):
+        return subprocess.CompletedProcess(
+            commande, 0, stdout="/Users/x/eclipse.mp4\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    assert choisit_video() == "/Users/x/eclipse.mp4"
+
+
+def test_on_macos_the_type_filter_comes_from_extensions_video(monkeypatch):
+    """Pas une seconde liste tenue a la main a cote : une extension ajoutee a
+    EXTENSIONS_VIDEO doit apparaitre dans le filtre osascript sans autre
+    geste -- le meme principe que _types_de_fichiers pour tkinter. Les UTI
+    "public.movie"/"public.video" restent en plus : ce sont elles qui font
+    filtrer le panneau natif par nature de fichier."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+    scripts = []
+
+    def faux_run(commande, capture_output, text):
+        scripts.append(commande[-1])
+        return subprocess.CompletedProcess(commande, 0, stdout="/x.mp4\n",
+                                           stderr="")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    choisit_video()
+    script = scripts[0]
+    assert '"public.movie"' in script and '"public.video"' in script
+    for extension in EXTENSIONS_VIDEO:
+        assert '"%s"' % extension.lstrip(".") in script
+
+
+def test_on_macos_a_user_cancel_returns_none_via_the_stderr_text(monkeypatch):
+    """AppleScript reports a closed panel as a non-zero exit whose stderr
+    names it "User canceled" — mireianievas's fork returned None here too,
+    but so did every OTHER osascript failure, which is exactly what the
+    HTTP caller's contract (Indisponible vs. None) cannot tolerate."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text):
+        return subprocess.CompletedProcess(
+            commande, 1, stdout="", stderr="execution error: User canceled. (-128)")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    assert choisit_video() is None
+
+
+def test_on_macos_a_user_cancel_is_recognized_by_the_dash_128_code(monkeypatch):
+    """The other spelling osascript uses for the same cancel, seen without
+    the English wording on some locales/OS versions."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text):
+        return subprocess.CompletedProcess(commande, 1, stdout="",
+                                           stderr="(-128)")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    assert choisit_video() is None
+
+
+def test_on_macos_a_real_osascript_failure_raises_indisponible(monkeypatch):
+    """LE PIEGE DU FORK D'ORIGINE : une erreur qui n'a rien a voir avec une
+    annulation (ici, un droit refuse) y rendait None comme un simple
+    abandon -- l'appelant HTTP n'aurait jamais su que la boite n'a pas pu
+    s'ouvrir. Ici, seul le texte d'annulation rend None ; tout le reste leve
+    Indisponible, avec le detail utile a l'intérieur."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text):
+        return subprocess.CompletedProcess(
+            commande, 1, stdout="", stderr="not authorized to send Apple events")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    with pytest.raises(Indisponible) as exc:
+        choisit_video()
+    assert "not authorized to send Apple events" in str(exc.value)
+
+
+def test_on_macos_osascript_missing_at_launch_raises_indisponible(monkeypatch):
+    """shutil.which l'avait trouve, mais le lancer echoue quand meme (retire
+    entre-temps, permissions, ...) : une infrastructure defaillante, pas un
+    choix de l'utilisateur -- Indisponible, pas None."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", lambda nom: "/usr/bin/osascript")
+
+    def faux_run(commande, capture_output, text):
+        raise FileNotFoundError("osascript disparu (simule)")
+
+    monkeypatch.setattr(subprocess, "run", faux_run)
+    with pytest.raises(Indisponible) as exc:
+        choisit_video()
+    assert "osascript disparu (simule)" in str(exc.value)
 
 
 def test_le_message_d_indisponibilite_dit_pourquoi():
