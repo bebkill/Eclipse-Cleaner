@@ -705,51 +705,96 @@
      It shows, at the thumbnail's scale, the window the render will actually
      cut out for THIS frame: its POSITION follows the disc (see
      track.planifie_trajectoire, replayed by cropWindowCenter) and is never
-     the user's to choose; its SIZE is dragged by the corner handle, and that
-     is the only gesture this feature has.
-     FIXED colours, not theme tokens: it sits on an unknown photo, not on the
-     page's own background -- the same reason as .etiquette above. A light
-     stroke doubled by a dark halo (box-shadow on both sides of the stroke)
-     stays legible on a white photo and on a black sky alike, which no single
-     hue manages. */
+     the user's to choose; its SIZE is dragged by a corner handle -- FOUR of
+     them now, one per corner, but all four still do the exact same
+     symmetric, center-anchored, aspect-locked resize the single handle did
+     before them (see cropSizeFrom): only the pointer math's sign flips per
+     corner. Dragging a handle is still the only gesture this feature has:
+     no rotation, no moving the rectangle by hand -- both stay out, on
+     purpose, of what her prototype otherwise offered.
+
+     Visual design follows @mireianievas' ROI prototype (issue #1): cyan
+     glow, corner handles, dimension badge, center crosshair.
+     FIXED colours, not theme tokens, through this whole block: like
+     .etiquette above, this sits on an unknown photo rather than on the
+     page's own background, and her cyan-on-black-outline scheme is legible
+     over a bright frame and a night sky alike -- the same property that
+     made it a good fit here, not just a borrowed look. */
   #cadre-recadrage {
-    position: absolute; border: 1px solid var(--sur-image);
-    box-shadow: 0 0 0 1px var(--voile), inset 0 0 0 1px var(--voile);
-    background: rgba(255, 255, 255, 0.06);
+    position: absolute; box-sizing: border-box;
+    border: 2px solid #00e5ff;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.4), inset 0 0 12px rgba(0, 229, 255, 0.15);
+    background: rgba(0, 229, 255, 0.05);
     /* The frame itself cannot be grabbed: it covers the thumbnail and would
-       otherwise swallow the hover on the image. Only the handle puts
+       otherwise swallow the hover on the image. Only the handles put
        pointer-events back to auto. */
     pointer-events: none;
   }
-  /* INSIDE the frame, against its corner, rather than straddling the stroke:
-     the thumbnail hides its overflow (.vignette-boite, overflow: hidden), so
-     a handle hanging outside would be clipped away that much sooner.
+  /* The tracked disc center for the frame on display -- cropWindowCenter's
+     own result, i.e. exactly the point the rectangle above is centered on.
+     The rectangle already shows the WINDOW; this crosshair names the single
+     point inside it the pipeline is actually following, frame after frame. */
+  .cadrage-croix-v, .cadrage-croix-h {
+    position: absolute; pointer-events: none;
+    background: rgba(0, 229, 255, 0.6);
+  }
+  .cadrage-croix-v { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
+  .cadrage-croix-h { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
+  .cadrage-croix-point {
+    position: absolute; left: 50%; top: 50%; width: 7px; height: 7px;
+    border-radius: 50%; background: #00e5ff; border: 1.5px solid #000;
+    transform: translate(-50%, -50%); pointer-events: none;
+  }
+  /* INSIDE the frame, against its own corner, rather than straddling the
+     stroke: the thumbnail hides its overflow (.vignette-boite, overflow:
+     hidden), so a handle hanging outside would be clipped away that much
+     sooner.
      KNOWN LIMITATION, and inset does not cure it: the window may legitimately
      sit up to `depassement` beyond the source edges (400 px by default, see
      pipeline.DEPASSEMENT_BUTEE_DEFAUT and track.planifie_trajectoire, where
      the replicated band is filled from the edge). When the disc is close
-     enough to an edge for that to happen, the frame's bottom-right corner --
-     handle included -- is clipped by the thumbnail and cannot be grabbed on
-     that frame. Stepping to a frame where the window sits inside the source
-     gives the handle back; the size is global, so it can be set from any
-     frame.
+     enough to an edge for that to happen, whichever corner of the frame
+     faces that edge -- its handle included -- is clipped by the thumbnail
+     and cannot be grabbed on that frame; the other three stay reachable.
+     Stepping to a frame where the window sits inside the source gives every
+     handle back; the size is global, so it can be set from any frame.
      touch-action: none, without which the browser reads the gesture as a
      scroll and sends no pointermove at all. */
-  #poignee-recadrage {
-    position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
-    background: var(--sur-image); border: 1px solid var(--voile-fort);
-    border-radius: 3px; cursor: nwse-resize; pointer-events: auto;
-    touch-action: none;
+  .poignee-recadrage {
+    position: absolute; width: 9px; height: 9px;
+    background: #00e5ff; border: 1.5px solid #000; border-radius: 2px;
+    box-sizing: border-box; pointer-events: auto; touch-action: none;
+    z-index: 2;
   }
-  /* The live measurement during the gesture: dimensions in SOURCE pixels,
-     the only way to aim at a precise value with a mouse. Same veil as
-     .etiquette, for the same reason. */
+  .poignee-recadrage.nw { top: -4.5px; left: -4.5px; cursor: nwse-resize; }
+  .poignee-recadrage.se { bottom: -4.5px; right: -4.5px; cursor: nwse-resize; }
+  .poignee-recadrage.ne { top: -4.5px; right: -4.5px; cursor: nesw-resize; }
+  .poignee-recadrage.sw { bottom: -4.5px; left: -4.5px; cursor: nesw-resize; }
+  /* The live dimension badge -- ALWAYS on, not only while a handle is being
+     dragged: a pill floating above the rect's top edge, dark on cyan
+     exactly like her design, reading "452 × 802" and, once that matches the
+     size the server would pick on its own, "452 × 802 · auto" (the word via
+     t("cadrage_auto"), never hardcoded -- same key, same reasoning, as
+     paintCropLabel's own rule just below in this file). Dynamic text, hence
+     no data-t here either -- same trap as #cadrage-etat above. It is rebuilt
+     from scratch, current language included, every time dessineBandeau
+     replays placeCropFrame -- which rafraichitTextesDynamiques already
+     triggers (via dessine()) on a language switch, so it needs no repaint
+     hook of its own.
+     Flips INSIDE the rect (see .cadrage-mesure-dedans, set from `draw()`
+     against the real, measured geometry) when the rectangle sits close
+     enough to the thumbnail's own top edge that the pill above it would be
+     clipped by that same overflow: hidden. */
   #cadrage-mesure {
-    position: absolute; left: 0; top: 0; padding: 1px 5px;
-    font-size: 11px; font-variant-numeric: tabular-nums;
-    background: var(--voile); color: var(--sur-image); white-space: nowrap;
+    position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85); color: #00e5ff;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+    border: 1px solid rgba(0, 229, 255, 0.5); white-space: nowrap;
+    pointer-events: none; z-index: 3;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
   }
-  #cadrage-mesure[hidden] { display: none; }
+  #cadrage-mesure.cadrage-mesure-dedans { top: 6px; }
 
   /* -- etat de la frame courante, colle sous la pellicule -- */
   /* La pastille etait poussee a l'extreme droite de la barre de transport,
@@ -1728,11 +1773,37 @@ function cropSizeFrom(sx, sy, anchor) {
   return null;
 }
 
-// Attaches the rectangle and its handle to the central thumbnail's box.
-// Called from dessineBandeau, so it is redone every time the strip is
-// rebuilt -- a new position, a new zoom, a window resized by the layout:
-// there is no separate observer to keep in step, and no stale rectangle can
-// survive, since dessineBandeau empties #bandeau first.
+// The four corners a resize handle can sit on, "north/south" then
+// "east/west" -- the only list that names them; placeCropFrame reads it to
+// create the four .poignee-recadrage elements, one per corner.
+const HANDLE_COINS = ["nw", "ne", "se", "sw"];
+
+// Where a given corner of a `largeur` x `hauteur` window centered on
+// `anchor` sits, in SOURCE pixels. The only thing that tells the four
+// handles apart: cropSizeFrom itself takes the ABSOLUTE distance from the
+// anchor on each axis, so once grab is measured from the correct corner, a
+// drag away from the center -- whichever corner it starts from -- always
+// reads as "grow", and one back towards it always reads as "shrink".
+function cropCornerRef(coin, anchor, largeur, hauteur) {
+  const sx = coin[1] === "e" ? 1 : -1;
+  const sy = coin[0] === "s" ? 1 : -1;
+  return [anchor[0] + sx * largeur / 2, anchor[1] + sy * hauteur / 2];
+}
+
+// How far the dimension badge (#cadrage-mesure) sits above the rectangle's
+// own top edge, in CSS pixels -- the "top: -26px" rule in the stylesheet,
+// named here so placeCropFrame's draw() can decide, from the frame's REAL
+// measured top, whether that pill would be clipped by the thumbnail's own
+// overflow: hidden and must flip inside instead (see
+// .cadrage-mesure-dedans).
+const CADRAGE_BADGE_DEGAGEMENT = 26;
+
+// Attaches the rectangle, its crosshair, its badge and its four handles to
+// the central thumbnail's box. Called from dessineBandeau, so it is redone
+// every time the strip is rebuilt -- a new position, a new zoom, a window
+// resized by the layout: there is no separate observer to keep in step, and
+// no stale rectangle can survive, since dessineBandeau empties #bandeau
+// first.
 function placeCropFrame(boite, n) {
   if (!crop || !crop.traj) return;
   const srcW = crop.source[0], srcH = crop.source[1];
@@ -1772,13 +1843,28 @@ function placeCropFrame(boite, n) {
 
   const cadre = document.createElement("div");
   cadre.id = "cadre-recadrage";
+  const croixV = document.createElement("div");
+  croixV.className = "cadrage-croix-v";
+  const croixH = document.createElement("div");
+  croixH.className = "cadrage-croix-h";
+  const croixPoint = document.createElement("div");
+  croixPoint.className = "cadrage-croix-point";
   const mesure = document.createElement("div");
   mesure.id = "cadrage-mesure";
-  mesure.hidden = true;
-  const poignee = document.createElement("div");
-  poignee.id = "poignee-recadrage";
+  cadre.appendChild(croixV);
+  cadre.appendChild(croixH);
+  cadre.appendChild(croixPoint);
   cadre.appendChild(mesure);
-  cadre.appendChild(poignee);
+  // FOUR handles, one per corner -- HANDLE_COINS below is the only place
+  // that names them. Every one is wired to the exact same listeners further
+  // down; only cropCornerRef's sign flips between them.
+  const poignees = {};
+  for (const coin of HANDLE_COINS) {
+    const p = document.createElement("div");
+    p.className = "poignee-recadrage " + coin;
+    cadre.appendChild(p);
+    poignees[coin] = p;
+  }
   boite.appendChild(cadre);
 
   // The center is FROZEN at pointerdown and reused for the whole gesture:
@@ -1787,50 +1873,41 @@ function placeCropFrame(boite, n) {
   // with the size. The reload that follows the release puts it back on the
   // real, size-dependent center.
   let anchor = null;
-  // How far the pointer sat from the rectangle's corner when it was
-  // grabbed, in source pixels. Subtracted from every later reading, so the
-  // corner does not JUMP to the cursor on the first pointermove: the handle
-  // is 14px wide and one is never grabbed dead centre.
+  // How far the pointer sat from the rectangle's OWN corner (the one being
+  // dragged, per cropCornerRef) when it was grabbed, in source pixels.
+  // Subtracted from every later reading, so the corner does not JUMP to the
+  // cursor on the first pointermove: the handle is 9px wide and one is
+  // never grabbed dead centre.
   let grab = [0, 0];
+
+  // Badge text and, when it would be clipped by the thumbnail's own
+  // overflow: hidden (the rect sitting close enough to its top edge),
+  // whether the pill flips inside the rect instead of floating above it --
+  // see #cadrage-mesure and .cadrage-mesure-dedans in the stylesheet.
+  function paintBadge(largeur, hauteur, topPx) {
+    const estAuto = crop.auto && largeur === crop.taille[0] && hauteur === crop.taille[1];
+    mesure.textContent = largeur + " × " + hauteur
+      + (estAuto ? " · " + t("cadrage_auto") : "");
+    mesure.classList.toggle("cadrage-mesure-dedans", topPx < CADRAGE_BADGE_DEGAGEMENT);
+  }
 
   function draw(largeur, hauteur, centre) {
     const c = centre || cropWindowCenter(n, largeur, hauteur);
+    const top = oy + (c[1] - hauteur / 2) * k;
     cadre.style.left = (ox + (c[0] - largeur / 2) * k) + "px";
-    cadre.style.top = (oy + (c[1] - hauteur / 2) * k) + "px";
+    cadre.style.top = top + "px";
     cadre.style.width = (largeur * k) + "px";
     cadre.style.height = (hauteur * k) + "px";
+    paintBadge(largeur, hauteur, top);
   }
   draw(w, h, null);
 
-  poignee.addEventListener("pointerdown", (e) => {
-    // preventDefault: without it the browser starts its own drag-select on
-    // the thumbnail, and the pointermove stream stops halfway through.
-    e.preventDefault();
-    poignee.setPointerCapture(e.pointerId);
-    cropDragging = true;
-    anchor = cropWindowCenter(n, w, h);
-    const p = versSource(e);
-    grab = [p[0] - (anchor[0] + w / 2), p[1] - (anchor[1] + h / 2)];
-    mesure.hidden = false;
-    mesure.textContent = w + "×" + h;
-  });
-
-  poignee.addEventListener("pointermove", (e) => {
-    if (!cropDragging) return;
-    const p = versSource(e);
-    const taille = cropSizeFrom(p[0] - grab[0], p[1] - grab[1], anchor);
-    if (!taille) return;
-    w = taille[0]; h = taille[1];
-    draw(w, h, anchor);
-    mesure.textContent = w + "×" + h;
-  });
-
-  function releve(e) {
+  // A capture already released by the browser (pointercancel) throws when
+  // released again; the gesture is over either way, so every caller below
+  // swallows that.
+  function releve(e, poignee) {
     if (!cropDragging) return;
     cropDragging = false;
-    mesure.hidden = true;
-    // A capture already released by the browser (pointercancel) throws
-    // here; the gesture is over either way.
     try { poignee.releasePointerCapture(e.pointerId); } catch (err) {}
     if (w === crop.taille[0] && h === crop.taille[1]) {
       // Nothing to record. Redraw on the REAL center rather than on the
@@ -1841,8 +1918,33 @@ function placeCropFrame(boite, n) {
     }
     sendCrop({ taille: [w, h] });
   }
-  poignee.addEventListener("pointerup", releve);
-  poignee.addEventListener("pointercancel", releve);
+
+  for (const coin of HANDLE_COINS) {
+    const poignee = poignees[coin];
+    poignee.addEventListener("pointerdown", (e) => {
+      // preventDefault: without it the browser starts its own drag-select on
+      // the thumbnail, and the pointermove stream stops halfway through.
+      e.preventDefault();
+      poignee.setPointerCapture(e.pointerId);
+      cropDragging = true;
+      anchor = cropWindowCenter(n, w, h);
+      const coinPos = cropCornerRef(coin, anchor, w, h);
+      const p = versSource(e);
+      grab = [p[0] - coinPos[0], p[1] - coinPos[1]];
+    });
+
+    poignee.addEventListener("pointermove", (e) => {
+      if (!cropDragging) return;
+      const p = versSource(e);
+      const taille = cropSizeFrom(p[0] - grab[0], p[1] - grab[1], anchor);
+      if (!taille) return;
+      w = taille[0]; h = taille[1];
+      draw(w, h, anchor);
+    });
+
+    poignee.addEventListener("pointerup", (e) => releve(e, poignee));
+    poignee.addEventListener("pointercancel", (e) => releve(e, poignee));
+  }
 }
 
 // THE SAFETY NET, and the second half of the fix documented at the top of
