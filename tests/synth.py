@@ -91,3 +91,51 @@ def make_frame(w=270, h=480, center=(135.0, 240.0), r=60.0, phase=0.0,
         img = _flou_gaussien(img, blur)
 
     return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def make_moon_frame(w=270, h=480, center=(135.0, 240.0), r=60.0,
+                    umbra=0.5, umbra_level=0.15, angle=0.0, gain=0.8,
+                    wb=(0.92, 0.95, 1.0), umbra_wb=(1.0, 0.40, 0.25),
+                    fond=0.0, blur=0.8):
+    """Lunar-eclipse frame: one disc, partly covered by the Earth's shadow.
+
+    umbra       : fraction of the diameter covered by the shadow (0..1)
+    umbra_level : luminance of the shadowed part, fraction of the lit part
+    angle       : direction the shadow comes from, radians
+    The shadow is a large circle (2.5 r), like the real umbra: its edge
+    through the disc is an arc, not a straight line.
+    """
+    cx, cy = center
+    disc = _couverture_disque(w, h, cx, cy, r)
+    rs = 2.5 * r
+    d = rs + r - 2.0 * r * float(umbra)
+    shadow = _couverture_disque(w, h, cx - d * np.cos(angle),
+                                cy - d * np.sin(angle), rs)
+    lit = disc * (1.0 - shadow)
+    shadowed = disc * shadow
+    level = gain * 255.0
+    img = (lit * level)[:, :, None] * np.array(wb, np.float32)
+    img = img + (shadowed * level * umbra_level)[:, :, None] \
+        * np.array(umbra_wb, np.float32)
+    img = img + fond
+    if blur > 0.0:
+        img = _flou_gaussien(img, blur)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def make_totality_frame(w=270, h=480, center=(135.0, 240.0), r=60.0,
+                        corona=0.5, fond=0.0):
+    """Solar totality: a black disc ringed by a corona glow.
+
+    The gradient at the limb points AWAY from the center (dark inside,
+    bright outside): the ground truth for the dark-disc vote regime.
+    """
+    cx, cy = center
+    disc = _couverture_disque(w, h, cx, cy, r)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    outside = np.clip(dist - r, 0.0, None)
+    glow = corona * 255.0 * np.exp(-((outside / (0.45 * r)) ** 2))
+    img = (glow * (1.0 - disc) + 2.0 * disc + fond)[:, :, None] \
+        * np.ones(3, np.float32)
+    return np.clip(img, 0, 255).astype(np.uint8)

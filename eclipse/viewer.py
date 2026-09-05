@@ -7,9 +7,12 @@ rendu — ce que l'utilisateur voit en rouge est donc exactement ce que le
 rendu ecarte.
 """
 import json
+import mimetypes
 import os
+import re
 import shutil
 import sys
+import tempfile
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +36,17 @@ _PAGE = os.path.join(os.path.dirname(__file__), "static", "viewer.html")
 #: quelques Ko laissent une marge large sans laisser un client (ou un script
 #: errant) gonfler la memoire du serveur avec un corps arbitrairement grand.
 TAILLE_CORPS_MAX = 4096
+
+#: Chunk size for streaming GET /video. Sources reach 326 MB: reading a
+#: whole file into memory per request would not scale, so the body is
+#: always sent in fixed-size pieces, full download and Range alike.
+VIDEO_CHUNK_SIZE = 65536
+
+#: A single-range Range header, as sent by an HTML5 <video> element:
+#: "bytes=A-B", "bytes=A-" (open-ended) or "bytes=-N" (suffix, last N
+#: bytes). Anything else (multiple ranges, no digit at all) does not match
+#: and is treated as absent per RFC 7233 -- see _sert_video.
+_SINGLE_RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
 def nb_frames_estime(info):
@@ -157,9 +171,81 @@ def _signature_analyse(donnees):
             "width": donnees.get("width"), "height": donnees.get("height")}
 
 
+#: Relative tolerance on the crop window's aspect ratio, the SAME one
+#: pipeline.render checks: 0.5% of ellipticity, invisible to the eye. It
+#: cannot be zero, since the even dimensions yuv420p demands make an exact
+#: ratio unreachable (see pipeline.tailles_defaut, whose own recommendation
+#: is 0.43% off on a small source). The viewer REFUSES where render() merely
+#: warns: here the value comes from a mouse gesture, which costs nothing to
+#: make again.
+TOLERANCE_RAPPORT = 5e-3
+
+
+def _cadrage_vue(info, cadrage):
+    """The crop window as THE PAGE needs it, minus the trajectory.
+
+    Enough to draw, over the central thumbnail, the rectangle the render
+    will actually cut out: the size in force, whether it is still the one
+    the pipeline recommends, the source and output dimensions (the page
+    locks the rectangle's aspect on the output's, exactly as render()
+    checks it), and the overshoot tolerated beyond the edges (see
+    track.planifie_trajectoire, which the page replays frame by frame).
+
+    "auto" describes the size IN FORCE, never the absence of a file: a
+    --taille that happens to equal the recommendation reads as "auto",
+    which is what the label must say. The user judges a size, not a
+    provenance.
+    """
+    from .pipeline import DEPASSEMENT_BUTEE_DEFAUT, tailles_defaut
+
+    src_w, src_h = int(info["width"]), int(info["height"])
+    fenetre, sortie = tailles_defaut(src_w, src_h)
+    cadrage = cadrage or {}
+    taille = cadrage.get("taille") or fenetre
+    taille_sortie = cadrage.get("taille_sortie") or sortie
+    depassement = cadrage.get("depassement_butee")
+    taille = [int(taille[0]), int(taille[1])]
+    return {"taille": taille, "auto": taille == list(fenetre),
+            "source": [src_w, src_h],
+            "sortie": [int(taille_sortie[0]), int(taille_sortie[1])],
+            "depassement": (DEPASSEMENT_BUTEE_DEFAUT if depassement is None
+                            else float(depassement))}
+
+
+def _taille_demandee(brut, vue):
+    """The requested window size, validated, or None when it is refused.
+
+    EVEN, because yuv420p demands it (see pipeline.tailles_defaut); within
+    the SOURCE's dimensions, because a larger window would have no pixel to
+    show along its border; and at the OUTPUT's ratio, because that is the
+    ratio the final upscale restores -- departing from it would stretch the
+    disc into an ellipse.
+
+    Returns None rather than raising: the caller turns it into a 400, and a
+    refused size is a request that makes no sense, not a failure.
+    """
+    if not isinstance(brut, (list, tuple)) or len(brut) != 2:
+        return None
+    # bool is an int in Python: exclude it, or [true, true] would pass for a
+    # 1x1 window.
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in brut):
+        return None
+    w, h = int(brut[0]), int(brut[1])
+    src_w, src_h = vue["source"]
+    if w % 2 or h % 2:
+        return None
+    if not (2 <= w <= src_w and 2 <= h <= src_h):
+        return None
+    sortie_w, sortie_h = vue["sortie"]
+    if abs((w / h) / (sortie_w / sortie_h) - 1.0) > TOLERANCE_RAPPORT:
+        return None
+    return (w, h)
+
+
 def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
                    seuils=None, tolerance_bord=None, seuil_masque=None,
-                   cadrage=None, couleur=None):
+                   cadrage=None, couleur=None,
+                   preset_demande=None, preset_suggere=None):
     """Ce que les routes ont besoin de connaitre, observe sans rien generer.
 
     Ne leve plus quand le cache manque, quand les vignettes manquent, ou
@@ -183,6 +269,12 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
     par le Porteur (defauts appliques ici pour un appel direct). Meme
     statut que le cadrage : aucun verdict n'en depend, le descripteur les
     enregistre.
+
+    preset_demande, preset_suggere: the eclipse profile explicitly asked for
+    (page or command line) and the one detection proposed, both resolved by
+    the Porteur - this function never probes. Together with the cache's own
+    preset they give the "preset" triplet the page reads, and the choice
+    wins over the cache: see the staleness rule below.
     """
     from .pipeline import _signature_source, charger_cache
 
@@ -192,7 +284,18 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
     info = probe(source)
     signature = _signature_source(source)
     donnees = charger_cache(cache_path, source)
+    preset_cache = donnees.get("preset") if donnees else None
+    effectif = preset_demande or preset_cache or preset_suggere or "custom"
+    if donnees is not None and preset_cache != effectif:
+        # The cache was measured under another profile: for THIS choice it
+        # is stale, exactly as if it were absent. Nothing is deleted -
+        # coming back to the cache's preset finds it intact.
+        donnees = None
     nb_vignettes = compte(dossier_vignettes)
+    # Built BEFORE the early return, and shared by both shapes of the state:
+    # the window size and where it comes from do not depend on what is
+    # missing. Only the trajectory, added further down, needs the analysis.
+    vue_cadrage = _cadrage_vue(info, cadrage)
 
     manque = []
     if donnees is None:
@@ -219,56 +322,399 @@ def construit_etat(source, cache_path, decisions_path, dossier_vignettes,
         "cache": donnees,
         "reglages": _reglages(seuils, tolerance_bord, seuil_masque, cadrage,
                               couleur),
+        # The crop window, for the page. BESIDE reglages["cadrage"] rather
+        # than inside it: that one is the list of options to hand to the
+        # render (defaults NOT materialised, see Porteur.cadrage and
+        # test_without_anything_stored_or_asked_the_size_stays_absent), this
+        # one is the resolved geometry to display. Materialising the defaults
+        # in the former would make every earlier render read as "a refaire".
+        "cadrage": vue_cadrage,
+        # The three values the page needs to show a profile AND explain it:
+        # what is in force, what the cache on disk was measured with (None
+        # when there is none - it keeps its value when the mismatch above
+        # set that cache aside, which is precisely what lets the page say
+        # WHY the analysis reads as missing), and what detection proposed.
+        # French keys, like the rest of this state.
+        "preset": {"effectif": effectif, "cache": preset_cache,
+                   "suggere": preset_suggere},
     }
     if manque:
-        return {**base, "verdicts": [], "frames": [],
+        return {**base, "verdicts": [], "mesures_valides": 0, "frames": [],
                 "fps": info.get("fps", 30.0)}
 
     resultat = analyse_verdicts(donnees, info["width"], info["height"],
                                 seuils, tolerance_bord, seuil_masque)
+    # The center's trajectory, in SOURCE coordinates, exactly as the render
+    # will consume it (see pipeline.render, which hands it to
+    # track.planifie_trajectoire). The page needs it to put its rectangle
+    # where the window will REALLY be placed, and not in the middle of the
+    # source. Rounded to a tenth of a pixel: 2556 frames at fifteen decimals
+    # make 80 KB of JSON for a precision no screen shows -- float()
+    # explicitly, np.float64 not being serialisable.
+    vue_cadrage["traj"] = [[round(float(x), 1), round(float(y), 1)]
+                           for x, y in zip(resultat["traj_x"],
+                                           resultat["traj_y"])]
     avertissement = diagnostique(decisions_path, signature)
     if avertissement:
         print(f"ATTENTION : {langues.rend_fr(avertissement)}")
     return {**base, "verdicts": resultat["verdicts"],
+            "mesures_valides": resultat["mesures_valides"],
             "frames": donnees["frames"], "fps": donnees.get("fps", 30.0)}
 
 
-def chemins_derives(source):
-    """Cache, decisions et vignettes a cote de la source.
+#: Suffix of the per-video work folder. Appended to the FULL source
+#: filename, extension included -- see work_folder for why.
+SUFFIXE_TRAVAIL = "-eclipse"
 
-    --cache vaut « analysis.json » et --decisions « decisions.json », deux
-    noms RELATIFS au repertoire courant. Tant que le viewer voyait une seule
-    source c'etait supportable ; des qu'on en choisit une dans la page, deux
-    sources partageraient le meme cache et le meme tri -- les decisions
-    prises sur la video A appliquees a la video B. Ce n'est pas une
-    hypothese : le rendu lance depuis la page avait deja eu ce defaut.
 
-    L'EXTENSION EST CONSERVEE, et c'est le point le plus important de cette
-    fonction. En retirant l'extension, eclipse.mov et eclipse.mp4 -- tous
-    deux offerts par dialogue.EXTENSIONS_VIDEO, et une source avec son
-    transcodage dans un meme dossier est ordinaire ici -- donnaient des
-    chemins identiques au bit. Le chemin destructeur : ouvrir eclipse.mov,
-    voir l'avertissement « decisions d'une autre source », cliquer une frame,
-    et enregistrer() (os.replace) ecrase TOUT le tri de eclipse.mp4. C'est
-    exactement l'invariant que cette fonction existe pour tenir, et il
-    tombait.
-    Le nom complet en prefixe rend la derivation INJECTIVE par construction :
-    deux sources distinctes ne peuvent pas produire le meme nom, sans avoir a
-    raisonner sur des cas. Et le resultat est strictement plus long que la
-    source, donc aucun derive ne peut jamais designer la source elle-meme.
+def work_folder(source):
+    """The folder holding everything the viewer derives from this source.
 
-    ASYMETRIE ASSUMEE avec _sortie_rendu et _dossier_png, qui retirent
-    l'extension et gardent donc leur collision : les trois chemins d'ici
-    portent du travail IRREMPLACABLE -- un tri manuel ne se reproduit pas, et
-    ce projet vient d'en perdre un -- tandis qu'un rendu et un export PNG se
-    regagnent en faisant tourner la machine, et ont deja leur porte de
-    consentement (le drapeau `ecraser`). Ce n'est pas un oubli.
+    "<source>-eclipse", a sibling of the video: `holiday.mp4` gets
+    `holiday.mp4-eclipse/`. Derived files used to be scattered NEXT TO the
+    source, one `-analysis.json`, one `-decisions.json`, one `-vignettes/`,
+    one `-clean.mp4` and one `-frames/` per video; a folder holding a few
+    videos became unreadable. One folder per video keeps them together, and
+    keeps the two invariants the old naming already had:
 
-    Rien n'est cree ni efface ici : ce sont des NOMS.
+    THE EXTENSION IS KEPT, and this is the most important line here. Strip
+    it and eclipse.mov and eclipse.mp4 -- both offered by
+    dialogue.EXTENSIONS_VIDEO, and a source next to its transcode in one
+    folder is ordinary here -- would share a work folder, hence a decisions
+    file. The destructive path: open eclipse.mov, see the "decisions of
+    another source" warning, click one frame, and enregistrer() (os.replace)
+    overwrites ALL of eclipse.mp4's review. Keeping the full filename makes
+    the derivation INJECTIVE by construction: two distinct sources cannot
+    produce the same folder, with no case to reason about.
+
+    And the folder name is strictly LONGER than the source's, so it can
+    never designate the source itself -- nothing derived can ever overwrite
+    the video it came from.
+
+    Nothing is created or removed here: this is a NAME. The folder itself is
+    created when a porteur takes the source (see Porteur._pose).
     """
-    return {"cache_path": source + "-analysis.json",
-            "decisions_path": source + "-decisions.json",
-            "dossier_vignettes": source + "-vignettes"}
+    return source + SUFFIXE_TRAVAIL
+
+
+def chemins_derives(source):
+    """Cache, decisions and thumbnails, inside the source's work folder.
+
+    --cache defaults to "analysis.json" and --decisions to "decisions.json",
+    two names RELATIVE to the current directory. While the viewer saw a
+    single source that was bearable; as soon as one is chosen in the page,
+    two sources would share one cache and one review -- the decisions taken
+    on video A applied to video B. Not a hypothesis: the render launched
+    from the page already had that defect.
+
+    The names inside the folder are SIMPLE -- analysis.json, decisions.json,
+    vignettes/ -- because the folder already carries the identity of the
+    source (see work_folder, which holds the injectivity invariant). There
+    is no longer any asymmetry with _sortie_rendu and _dossier_png: they
+    used to strip the extension and therefore kept a collision that this
+    function refused, and now all five derived paths live in the same
+    injective folder. The one thing that keeps a self-identifying name is
+    the RENDERED VIDEO, because it gets copied out of the folder.
+
+    Nothing is created or removed here: these are NAMES.
+    """
+    dossier = work_folder(source)
+    return {"cache_path": os.path.join(dossier, "analysis.json"),
+            "decisions_path": os.path.join(dossier, "decisions.json"),
+            "dossier_vignettes": os.path.join(dossier, "vignettes")}
+
+
+#: Name of the file where the page records the window size chosen with the
+#: mouse, inside the source's work folder.
+NOM_CADRAGE = "cadrage.json"
+
+
+def chemin_cadrage(source):
+    """The stored crop size for this source, inside its work folder.
+
+    A SIBLING of chemins_derives rather than a fourth entry in it: the three
+    paths it returns are the ones the command line can override (--cache,
+    --decisions) or that a task writes into, and they travel together
+    through Porteur._pose. This one is never overridable and never named on
+    the command line -- it is the page's own memory, derived from the source
+    and from nothing else, so it is read where the source is known.
+
+    Nothing is created or removed here: this is a NAME.
+    """
+    return os.path.join(work_folder(source), NOM_CADRAGE)
+
+
+def charge_cadrage(source):
+    """The crop size stored for this source, as a (w, h) couple, or None.
+
+    Absent, unreadable, malformed: all three read as "nothing stored", and
+    the effective size then falls back to the command line's --taille
+    and, failing that, to pipeline.tailles_defaut. Raising here would let one
+    bad byte in a derived file stop the viewer from OPENING a video whose
+    review is perfectly intact -- the file is a convenience, the video is the
+    work.
+
+    Only the shape is checked, not the geometry (parity, source bounds,
+    output ratio): those belong to the route that ACCEPTS a size (see
+    _taille_demandee). A file written by hand with an impossible size lands
+    in render(), which owns that check and prints its own warning -- the same
+    treatment as a --taille typed on the command line, and for the same
+    reason: the operator asked for it explicitly.
+    """
+    try:
+        with open(chemin_cadrage(source), encoding="utf-8") as f:
+            donnees = json.load(f)
+    except (OSError, ValueError):
+        return None
+    taille = donnees.get("taille") if isinstance(donnees, dict) else None
+    if not isinstance(taille, (list, tuple)) or len(taille) != 2:
+        return None
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 2
+           for v in taille):
+        return None
+    return (int(taille[0]), int(taille[1]))
+
+
+def ecrit_cadrage(source, taille):
+    """Records this crop size for this source. Creates the work folder.
+
+    Written beside, then moved into place with os.replace, the same
+    discipline as decisions.enregistrer: writing in place would leave a
+    TRUNCATED file if the process died mid-write, and charge_cadrage reads a
+    truncated file as "nothing stored" -- the resize would look like it had
+    silently reverted to automatic.
+
+    A UNIQUE temporary name, from tempfile.mkstemp, and not a deterministic
+    <chemin>.tmp. The server is a ThreadingHTTPServer: two POST /api/cadrage
+    landing together -- two tabs, or a double gesture -- would open, truncate
+    and interleave THE SAME scratch file before either os.replace, and the
+    winner would deliver a mixture of both bodies. That is exactly the torn
+    write this function exists to prevent, merely moved one file sideways.
+    mkstemp also creates the file exclusively, so nothing else can be
+    following that name.
+
+    The scratch file is removed on any failure: a crash between creation and
+    replacement would otherwise leave a .cadrage-*.tmp in the work folder for
+    good, and nothing ever cleans that folder.
+    """
+    chemin = chemin_cadrage(source)
+    dossier = os.path.dirname(os.path.abspath(chemin)) or "."
+    os.makedirs(dossier, exist_ok=True)
+    fd, provisoire = tempfile.mkstemp(prefix=".cadrage-", suffix=".tmp",
+                                      dir=dossier)
+    try:
+        # os.fdopen takes ownership of the descriptor: closing the wrapper
+        # closes it, and there is no second close to get wrong.
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"taille": [int(taille[0]), int(taille[1])]}, f)
+        os.replace(provisoire, chemin)
+    except BaseException:
+        try:
+            os.remove(provisoire)
+        except OSError:
+            pass
+        raise
+
+
+def efface_cadrage(source):
+    """Drops the stored crop size. Absent is the normal case, not an error."""
+    try:
+        os.remove(chemin_cadrage(source))
+    except OSError:
+        pass
+
+
+def _rendu_de_cette_source(source, *rendus):
+    """True when a descriptor beside one of these renders names this source.
+
+    THE GATE THE OLD NAMING NEEDS, and the reason the render is not migrated
+    on its name alone. The old names stripped the extension: eclipse.mov and
+    eclipse.mp4 SHARED "eclipse-clean.mp4" and "eclipse-frames" -- the very
+    collision chemins_derives refused for the cache and the review. Moving
+    one on sight would carry a SIBLING VIDEO's render into this video's work
+    folder, where the page would then present it as this eclipse's output,
+    and the sibling would find its render gone.
+
+    So provenance is asked, not guessed: the descriptor written beside every
+    render from the page records the source signature of the analysis it
+    applied (see _signature_analyse and descripteur.recorded_source).
+
+    SEVERAL RENDERS ARE OFFERED, IN ORDER OF AUTHORITY, and the FIRST that
+    has a descriptor answers -- the others are not even read. The caller
+    passes the old-layout render first and the migrated one second: a
+    migration can be interrupted or resumed, so the descriptor may already
+    be in the work folder while the export it vouches for is still outside.
+    Order matters and is not a preference: when a descriptor sits beside the
+    OLD render, it is the one that speaks for the files still at the old
+    location, even if the folder holds another render with another
+    descriptor. Falling through to the folder's descriptor in that case
+    would carry a sibling's export in on someone else's word.
+
+    False on no descriptor anywhere, an unreadable one, or one naming
+    another video. A render produced by the `render` command has no
+    descriptor at all and therefore never migrates -- deliberately: it stays
+    exactly where its operator put it, and nothing is lost either way, since
+    this function only ever decides whether to MOVE.
+    """
+    from .descripteur import recorded_source
+    from .pipeline import _signature_source
+
+    try:
+        courante = _signature_source(source)
+    except OSError:
+        # The source cannot be stat'ed -- a mistyped path, migration running
+        # before construit_etat validates it (see Porteur._pose). Unknown
+        # provenance, hence no claim.
+        return False
+    for rendu in rendus:
+        enregistree = recorded_source(rendu)
+        if enregistree is not None:
+            return enregistree == courante
+    return False
+
+
+def _anciens_groupes(source):
+    """The old-layout items this source may claim, in provenance GROUPS.
+
+    Each group is a list of (old path, new path, label), and its FIRST item
+    decides for those that follow: a follower means nothing on its own, so
+    it does not travel while its head is still outside. Two groups have
+    followers -- the decisions file carries its backup generation
+    (decisions.SUFFIXE_PRECEDENT, one generation of THAT file), and the
+    render carries its descriptor and its PNG export, which share its
+    provenance exactly.
+
+    The labels are what the migration line prints, so they are the NEW
+    basenames -- what the operator will actually find in the folder.
+
+    THIS READS THE DISK, unlike work_folder and chemins_derives: the render
+    group is absent altogether when no descriptor -- neither the old one nor
+    the migrated one -- vouches for this source (see _rendu_de_cette_source).
+    Names alone cannot answer that question, which is exactly why the group
+    is filtered here rather than inside the mover. BOTH LOCATIONS are asked
+    because a migration can stop halfway: gating on the old descriptor alone
+    stranded a still-outside export for good once its descriptor had moved.
+    """
+    from .decisions import SUFFIXE_PRECEDENT
+    from .descripteur import chemin_descripteur
+
+    dossier = work_folder(source)
+    sans_ext = os.path.splitext(source)[0]
+    ancien_decisions = source + "-decisions.json"
+    nouveau_decisions = os.path.join(dossier, "decisions.json")
+    ancien_rendu = sans_ext + "-clean.mp4"
+    nouveau_rendu = _sortie_rendu(source)
+    groupes = [
+        [(source + "-analysis.json",
+          os.path.join(dossier, "analysis.json"), "analysis.json")],
+        [(ancien_decisions, nouveau_decisions, "decisions.json"),
+         # The backup follows its file WITHOUT any new plumbing: both names
+         # are its own path plus the suffix, so the new name falls out of
+         # the new decisions path. Left behind, it would be an orphaned
+         # generation of a file that is no longer there -- clutter next to
+         # the video, and a trap for whoever reads it as a review.
+         (ancien_decisions + SUFFIXE_PRECEDENT,
+          nouveau_decisions + SUFFIXE_PRECEDENT,
+          "decisions.json" + SUFFIXE_PRECEDENT)],
+        [(source + "-vignettes",
+          os.path.join(dossier, "vignettes"), "vignettes/")],
+    ]
+    if _rendu_de_cette_source(source, ancien_rendu, nouveau_rendu):
+        groupes.append([
+            (ancien_rendu, nouveau_rendu, os.path.basename(nouveau_rendu)),
+            # The descriptor follows its render: both sides derive their
+            # path from the video's, so naming the two videos names the two
+            # .json.
+            (chemin_descripteur(ancien_rendu),
+             chemin_descripteur(nouveau_rendu),
+             os.path.basename(chemin_descripteur(nouveau_rendu))),
+            (sans_ext + "-frames", _dossier_png(source), "frames/"),
+        ])
+    return groupes
+
+
+def _migre_disposition(source, honores=()):
+    """Moves this source's old-layout derived files into its work folder.
+
+    Announced, in one French line on the terminal (the house pattern of the
+    ATTENTION prints in change_source): files the operator left next to his
+    video must not silently move without him being able to find them again.
+
+    THE NEW ONE WINS. When both the old and the new path exist for one item,
+    nothing is done for that item: the folder holds what the viewer has been
+    writing since, and the old file stays untouched rather than being
+    overwritten -- the same rule that keeps a decisions file, which cannot
+    be reproduced, from being destroyed by a rename.
+
+    `honores` are the paths this porteur was actually GIVEN (the explicit
+    --cache / --decisions of the command line). An old-layout name that is
+    also one of them is left exactly where it is: the command line is
+    honored verbatim, and moving a file out from under the path the operator
+    named would be the very silent substitution this function exists to
+    avoid.
+
+    Item by item, but in PROVENANCE GROUPS: what only makes sense beside
+    another file does not travel without it (see _anciens_groupes). And a
+    render whose descriptor does not vouch for this source is not offered
+    here at all -- silently, since it plausibly belongs to a sibling video.
+
+    A FOLLOWER TRAVELS WHEN ITS HEAD IS IN THE FOLDER, and not only when
+    this very call is what put it there. "The head moved" and "the head is
+    already there" are the same fact for a follower, and telling them apart
+    stranded files FOREVER: one interrupted or contested migration -- the
+    decisions file moved, its backup left behind by a crash, or a render
+    moved while its descriptor was held open -- and the next open saw the
+    head "not moved" (it had nothing left to move) and never offered the
+    followers again. A render can then sit in the folder descriptor-less,
+    which the page reads as « a refaire » on an up-to-date render.
+
+    os.replace, not a copy: the two paths are siblings in one tree, hence
+    the same volume, and a rename moves a directory as well as a file. A
+    failure (a file held open by the explorer, an antivirus) is NAMED and
+    swallowed: it leaves the item under its old name, which the viewer will
+    simply read as missing -- never a half-move.
+
+    The folder is created only if there is something to move, so a source
+    that is refused a moment later (see Porteur._pose) leaves nothing
+    behind.
+    """
+    deplaces = []
+    dossier = work_folder(source)
+    honores = {os.path.normcase(os.path.abspath(c)) for c in honores if c}
+
+    def deplace(ancien, nouveau, etiquette):
+        """Moves this one item. True when it actually moved."""
+        if os.path.normcase(os.path.abspath(ancien)) in honores:
+            return False
+        if os.path.exists(nouveau) or not os.path.exists(ancien):
+            return False
+        try:
+            os.makedirs(dossier, exist_ok=True)
+            os.replace(ancien, nouveau)
+        except OSError as exc:
+            print(f"ATTENTION : {ancien} n'a pas pu etre deplace dans "
+                  f"{dossier} ({exc})")
+            return False
+        deplaces.append(etiquette)
+        return True
+
+    def deja_dans_le_dossier(ancien, nouveau, _etiquette):
+        """True when this item has already made the trip, in an earlier run.
+
+        Its old name is gone and the new one is there: no other reading of
+        that pair exists, since nothing but the migration writes the old
+        name. A head in that state green-lights its followers.
+        """
+        return not os.path.exists(ancien) and os.path.exists(nouveau)
+
+    for groupe in _anciens_groupes(source):
+        tete, suite = groupe[0], groupe[1:]
+        if deplace(*tete) or deja_dans_le_dossier(*tete):
+            for item in suite:
+                deplace(*item)
+    if deplaces:
+        print(f"Fichiers de travail deplaces dans {dossier} : "
+              f"{', '.join(deplaces)}")
 
 
 def _etat_vide():
@@ -285,9 +731,10 @@ def _etat_vide():
     """
     return {"source": None, "pret": False, "manque": list(ETAPES),
             "etapes": {nom: "indisponible" for nom in ETAPES},
-            "verdicts": [], "frames": [], "fps": 30.0,
+            "verdicts": [], "mesures_valides": 0, "frames": [], "fps": 30.0,
             "nb_frames_estime": 0, "signature": None,
-            "decisions_path": None, "dossier_vignettes": None}
+            "decisions_path": None, "dossier_vignettes": None,
+            "preset": {"effectif": "custom", "cache": None, "suggere": None}}
 
 
 class Porteur:
@@ -310,7 +757,26 @@ class Porteur:
                  taille=None, taille_sortie=None, interp_max=None,
                  interp_deplacement_max=None,
                  depassement_butee=None,
-                 couleur=None, couleur_fenetre=None, couleur_amplitude=None):
+                 couleur=None, couleur_fenetre=None, couleur_amplitude=None,
+                 preset=None):
+        #: The eclipse profile asked for on the command line, None when the
+        #: operator did not name one. Kept apart from preset_choisi so that
+        #: "auto" from the page drops the PAGE's choice only: it falls back
+        #: to this one when it was given, and to the cache's preset or
+        #: detection otherwise. The full order of precedence, resolved in
+        #: _pose and construit_etat, is: page choice > command line > cache >
+        #: detection > "custom".
+        self.preset_cli = preset
+        #: The profile chosen from the page (POST /api/preset), None until
+        #: someone chooses one. It wins over the command line: it is the
+        #: more recent intent. Reset by change_source -- a choice made in the
+        #: page belongs to the video it was made for.
+        self.preset_choisi = None
+        #: Detection results, memoised BY SOURCE PATH: classify_video
+        #: decodes 24 frames, and _pose runs on every reload (end of every
+        #: task, every colour change). Probing there would pay that cost
+        #: again and again for an answer that cannot change.
+        self._suggestions = {}
         #: Le cadrage, meme raison que les seuils etendue a la geometrie : le
         #: sous-parseur viewer accepte les memes options que render, et un
         #: utilisateur qui lance le viewer avec --taille 900x1600 puis clique
@@ -322,13 +788,29 @@ class Porteur:
         #: les arguments de render (voir _travail_rendu) et les reglages
         #: inscrits au descripteur (voir construit_etat) — qui doivent voir
         #: exactement le meme contenu.
-        self.cadrage = {nom: valeur for nom, valeur in (
-            ("taille", taille),
+        #:
+        #: EVERYTHING EXCEPT THE WINDOW SIZE, which depends on the SOURCE:
+        #: the page can change it with the mouse, and the choice is stored
+        #: per source (see chemin_cadrage). _pose therefore resolves it for
+        #: every source and rebuilds self.cadrage from this base. There is
+        #: still only ONE dictionary anybody reads, self.cadrage.
+        self._cadrage_base = {nom: valeur for nom, valeur in (
             ("taille_sortie", taille_sortie),
             ("interp_max", interp_max),
             ("interp_deplacement_max", interp_deplacement_max),
             ("depassement_butee", depassement_butee),
         ) if valeur is not None}
+        #: The window size asked for ON THE COMMAND LINE (--taille), or None.
+        #: Kept apart because it is only a FALLBACK: the source's own
+        #: cadrage.json replaces it whenever it exists. Order of precedence,
+        #: resolved in _cadrage_pour: stored file > command line > the
+        #: pipeline.tailles_defaut default -- and that last one is an
+        #: ABSENCE, never a materialised value.
+        self.taille_cli = taille
+        #: Set right away so the attribute exists even if _pose raises on an
+        #: unreadable source; _pose replaces it with the crop of the source
+        #: it actually installs.
+        self.cadrage = dict(self._cadrage_base)
         #: Le fichier de decisions demande en ligne de commande. Retenu
         #: parce que change_source lui substitue un chemin DERIVE : le tri
         #: revu sous « viewer A.mp4 » est alors ecrit dans ce fichier-ci,
@@ -358,6 +840,24 @@ class Porteur:
         # un rendu au cadrage muet. self.cadrage est la seule.
         self._pose(source, cache_path, decisions_path, dossier_vignettes)
 
+    def _cadrage_pour(self, source):
+        """The crop options in force for THIS source.
+
+        The one place where the window size's precedence is decided: the
+        source's stored file, failing that --taille, failing that NOTHING.
+        "Nothing" is a choice and not an oversight: render() owns its
+        default (pipeline.tailles_defaut) and the descriptor must go on
+        recording an ABSENCE, without which every render produced before
+        this feature would read as "a refaire" overnight.
+        """
+        taille = None if source is None else charge_cadrage(source)
+        if taille is None:
+            taille = self.taille_cli
+        cadrage = dict(self._cadrage_base)
+        if taille is not None:
+            cadrage["taille"] = taille
+        return cadrage
+
     def _pose(self, source, cache_path, decisions_path, dossier_vignettes):
         """Installe ces chemins et l'etat qui va avec, d'un bloc.
 
@@ -378,11 +878,76 @@ class Porteur:
         refaire, le faux negatif que ce chantier interdit. Une seule
         orthographe, plus de desalignement possible.
 
+        LA MIGRATION PASSE AVANT construit_etat, donc avant la validation de
+        la source, et c'est un choix. L'inverse serait plus prudent en
+        apparence -- ne rien deplacer pour une source qu'on va refuser --
+        mais construit_etat LIT le cache, les decisions et les vignettes :
+        les lire avant de deplacer ferait rapporter « rien n'existe » sur
+        une video dont tout le travail est la, sous l'ancienne disposition,
+        et l'operateur verrait une page vide jusqu'au rechargement suivant.
+        Le risque pris est nul : les fichiers deplaces appartiennent a CE
+        chemin de source de toute facon, et _migre_disposition ne cree le
+        dossier que s'il a quelque chose a y mettre (voir sa docstring), donc
+        une source illisible ne laisse rien derriere elle.
+
+        Le dossier de travail, lui, est assure APRES la construction de
+        l'etat : c'est la que les taches ecriront (analyze ouvre son cache
+        sans creer de parent), et le creer avant la validation serait un
+        dossier vide par chemin mal tape.
         """
+        from .pipeline import charger_cache
+
+        if source is not None:
+            # _decisions_ligne_de_commande IN ADDITION to the paths in
+            # force: after a round trip through the page (A -> B -> A) the
+            # ones in force are DERIVED, and the file the operator named on
+            # the command line would no longer be protected by them. It is
+            # the very file _tri_orpheline exists to keep speaking about;
+            # migrating it would make that warning describe a file that had
+            # silently moved.
+            _migre_disposition(source, (cache_path, decisions_path,
+                                        dossier_vignettes,
+                                        self._decisions_ligne_de_commande))
+        requested = self.preset_choisi or self.preset_cli
+        suggested = None
+        if (source is not None and requested is None
+                and charger_cache(cache_path, source) is None):
+            # No cache and no explicit choice: probe once per source. The
+            # cache's preset, when a cache exists, wins without probing.
+            if source not in self._suggestions:
+                from .detect import classify_video
+                self._suggestions[source] = classify_video(source)["type"]
+            suggested = self._suggestions[source]
+        # In a LOCAL VARIABLE, assigned only further down: the window size is
+        # re-read from the NEW source's disk, and construit_etat can still
+        # refuse that source (probe raises on an unreadable one). Writing it
+        # straight away would leave the porteur carrying the refused source's
+        # crop on the source it keeps -- exactly the half-switched state this
+        # method exists to prevent.
+        cadrage = self._cadrage_pour(source)
         etat = _etat_vide() if source is None else construit_etat(
             source, cache_path, decisions_path, dossier_vignettes,
-            self.seuils, self.tolerance_bord, self.seuil_masque, self.cadrage,
-            self.couleur)
+            self.seuils, self.tolerance_bord, self.seuil_masque, cadrage,
+            self.couleur,
+            preset_demande=requested, preset_suggere=suggested)
+        if source is not None:
+            # La source est lisible (construit_etat n'a pas leve) : le
+            # dossier de travail peut naitre. Les taches y ecrivent toutes --
+            # decisions.enregistrer, analyze, vignettes.genere, le rendu --
+            # et seule genere() cree son dossier elle-meme.
+            try:
+                os.makedirs(work_folder(source), exist_ok=True)
+            except OSError as exc:
+                # A read-only medium (a write-protected card, a share
+                # mounted read-only) must not make OPENING the video fail:
+                # reviewing what is already there stays perfectly possible,
+                # and only the tasks that write need the folder. Raising
+                # here reported a mistyped path instead of a full-blown
+                # refusal to write.
+                print(f"ATTENTION : le dossier de travail "
+                      f"{work_folder(source)} n'a pas pu etre cree "
+                      f"({exc}) : l'analyse, les vignettes et le rendu ne "
+                      f"pourront pas y ecrire.")
         # Une DONNEE, pas un verdict : le fichier de decisions demande en
         # ligne de commande, que _tri_orpheline compare au chemin derive a
         # chaque requete. Le calcul n'est deliberement pas fige ici, voir
@@ -393,6 +958,11 @@ class Porteur:
         self.cache_path = cache_path
         self.decisions_path = decisions_path
         self.dossier_vignettes = dossier_vignettes
+        # THE SAME dictionary the state was just built from, and not a second
+        # call to _cadrage_pour: render's arguments (see _travail_rendu) and
+        # the descriptor's reglages must see exactly the same content, even
+        # if the stored file moved between two reads.
+        self.cadrage = cadrage
         self.etat = etat
 
     def recharge(self):
@@ -413,13 +983,47 @@ class Porteur:
                         "amplitude": float(amplitude)}
         self.recharge()
 
+    def regle_cadrage(self, taille):
+        """Installs this crop size for the current source, and reloads.
+
+        taille None = back to automatic: the stored file is REMOVED rather
+        than filled with today's recommendation, so the size falls back to
+        --taille and then to pipeline.tailles_defaut -- which is derived from
+        the source and must be free to move with it.
+
+        The value arrives already validated (see the /api/cadrage route).
+        The reload rebuilds self.cadrage AND the descriptor's reglages from
+        it, so the staleness of an existing render (« a refaire ») follows on
+        its own -- the same mechanism as regle_couleur, and the reason this
+        feature needs no new plumbing on that side.
+        """
+        if self.source is None:
+            raise ValueError("aucune source choisie")
+        if taille is None:
+            efface_cadrage(self.source)
+        else:
+            ecrit_cadrage(self.source, taille)
+        self.recharge()
+
+    def regle_preset(self, value):
+        """Installs this preset choice ("auto" clears it) and reloads.
+
+        Nothing on disk is touched. The reload rebuilds the state, and with
+        it the staleness of an analysis measured under another profile (see
+        construit_etat): coming back to the cache's preset finds it whole.
+        """
+        self.preset_choisi = None if value == "auto" else value
+        self.recharge()
+
     def change_source(self, chemin):
         """Bascule sur cette video. Leve si elle n'est pas lisible.
 
         Le cache, les decisions et les vignettes sont DERIVES de la source
         (voir chemins_derives) et non repris de la ligne de commande : deux
         sources choisies dans la page partageraient sinon le meme cache et
-        le meme tri.
+        le meme tri. Ils vivent dans le dossier de travail de la source, que
+        _pose cree, et ou _pose remonte au passage les fichiers laisses par
+        l'ancienne disposition (voir _migre_disposition).
 
         La validation est celle de construit_etat, qui commence par probe() :
         un fichier absent leve FileNotFoundError, un fichier qui n'est pas
@@ -430,9 +1034,27 @@ class Porteur:
         Rien n'est efface : le cache et les decisions de la source
         precedente restent ou ils sont, et y revenir les retrouve.
         """
+        # A preset chosen in the page belongs to the video it was chosen
+        # FOR: it was read off that video's frames. Carried over, "moon"
+        # picked for A would silently force moon on B and suppress B's own
+        # detection -- a wrong profile is a wrong set of pass-1 strategies,
+        # so it is a wrong analysis, not a cosmetic default. Switching
+        # sources therefore returns to the command line, the new source's
+        # cache, or detection.
+        # Cleared BEFORE _pose, which reads it to build the state, and put
+        # back if _pose refuses: that call leaves the porteur exactly where
+        # it was (see its docstring), and a mistyped path must not silently
+        # drop the profile chosen for the video still on screen.
+        ancien_choix = self.preset_choisi
+        self.preset_choisi = None
         derives = chemins_derives(chemin)
-        self._pose(chemin, derives["cache_path"], derives["decisions_path"],
-                   derives["dossier_vignettes"])
+        try:
+            self._pose(chemin, derives["cache_path"],
+                       derives["decisions_path"],
+                       derives["dossier_vignettes"])
+        except BaseException:
+            self.preset_choisi = ancien_choix
+            raise
         # Au terminal EN PLUS du corps de /api/frames : la bascule peut
         # orpheliner le tri de la ligne de commande, et l'operateur qui a
         # lance « viewer A.mp4 » regarde ce terminal-la. Ici et non dans
@@ -492,7 +1114,20 @@ def _corps_frames(etat):
                  "manque": etat["manque"],
                  "nb_frames_estime": etat["nb_frames_estime"],
                  "etapes": etapes_, "divergentes": list(divergentes),
-                 "couleur": etat["reglages"]["couleur"]}
+                 "couleur": etat["reglages"]["couleur"],
+                 "mesures_valides": etat["mesures_valides"],
+                 # On this form ESPECIALLY: a source that is not ready is
+                 # exactly where the profile matters, since it is what the
+                 # analysis about to run will be measured with.
+                 "preset": etat["preset"],
+                 # No trajectory on this shape: it comes from the analysis,
+                 # which is precisely what is missing. Nothing crop-related
+                 # is on screen either -- body.pas-pret hides #scene whole,
+                 # footer and overlay with it. Sent anyway so that ONE shape
+                 # of the response does not have to be special-cased on the
+                 # page: chargeFrames reads d.cadrage the same way on both,
+                 # and the label is already correct when the strip appears.
+                 "cadrage": etat["cadrage"]}
         if avertissement:
             corps["avertissement"] = avertissement
         return corps
@@ -513,7 +1148,13 @@ def _corps_frames(etat):
     corps = {"source": etat["source"], "pret": True, "fps": etat["fps"],
              "frames": frames, "etapes": etapes_,
              "divergentes": list(divergentes),
-             "couleur": etat["reglages"]["couleur"]}
+             "couleur": etat["reglages"]["couleur"],
+             "mesures_valides": etat["mesures_valides"],
+             "preset": etat["preset"],
+             # Trajectory included on this shape: it is what lets the page
+             # put the crop rectangle where the render's window will land for
+             # each frame.
+             "cadrage": etat["cadrage"]}
     # Surface au client un fichier de decisions present mais refuse (schema
     # perime, source differente...) : sans ca l'utilisateur croit reviser
     # avec ses decisions passees alors qu'elles ont ete silencieusement
@@ -539,16 +1180,23 @@ def _texte_avertissement(fait):
 
 
 def _sortie_rendu(source):
-    """La sortie par defaut : <source sans extension>-clean.mp4.
+    """The default output: <work folder>/<source basename>-clean.mp4.
 
-    Retire l'extension, contrairement a chemins_derives qui la conserve :
-    eclipse.mov et eclipse.mp4 visent donc le meme -clean.mp4. Asymetrie
-    assumee, voir chemins_derives -- un rendu se refait, un tri manuel non,
-    et l'ecrasement passe ici par le consentement du drapeau `ecraser`.
+    Inside the work folder like every other derived file, but the ONE that
+    keeps a self-identifying basename rather than a simple "clean.mp4": this
+    is the file that gets copied, sent and shared OUT of the folder, and an
+    anonymous clean.mp4 sitting in a download folder next to three others
+    would have lost which eclipse it came from.
+
+    The extension is stripped from the BASENAME only, so the old collision
+    is gone: eclipse.mov and eclipse.mp4 both name their render
+    "eclipse-clean.mp4", but each one lives in its own injective folder (see
+    work_folder). No asymmetry with chemins_derives left to assume.
     """
     from .pipeline import _chemin_canonique
 
-    sortie = os.path.splitext(source)[0] + "-clean.mp4"
+    radical = os.path.splitext(os.path.basename(source))[0]
+    sortie = os.path.join(work_folder(source), radical + "-clean.mp4")
     # La contrainte du projet, transformee en assertion : la source ne doit
     # jamais etre ecrasee. Une extension inattendue ne doit pas suffire a
     # faire coincider les deux chemins. Comparaison canonique (casse
@@ -560,15 +1208,20 @@ def _sortie_rendu(source):
 
 
 def _dossier_png(source):
-    """Le dossier de la sequence PNG : <source sans extension>-frames.
+    """The PNG sequence folder: <work folder>/frames.
 
-    Retire l'extension, contrairement a chemins_derives qui la conserve :
-    eclipse.mov et eclipse.mp4 visent donc le meme dossier. Asymetrie
-    assumee et non oubli, voir chemins_derives -- un export PNG se refait,
-    un tri manuel non, et l'ecrasement passe ici par le consentement du
-    drapeau `ecraser`.
+    A simple name, like the cache and the decisions: the work folder already
+    says which video this is (see work_folder). eclipse.mov and eclipse.mp4
+    no longer share it -- the collision the old <source sans
+    extension>-frames kept is gone with the folder, and so is the asymmetry
+    chemins_derives used to have to justify.
+
+    Nested inside the folder and NOT inside the source's own directory,
+    which is what keeps _verifie_dossier_png satisfiable: the render
+    launched from the page swaps this folder whole, and it must never
+    contain the video.
     """
-    return os.path.splitext(source)[0] + "-frames"
+    return os.path.join(work_folder(source), "frames")
 
 
 def _tri_orpheline(etat):
@@ -577,10 +1230,10 @@ def _tri_orpheline(etat):
     Le trou qu'elle bouche : « viewer A.mp4 » ecrit les revues dans le
     fichier de la LIGNE DE COMMANDE (./decisions.json par defaut). Basculer
     vers B.mp4 puis revenir a A.mp4 depuis la page fait lire
-    A.mp4-decisions.json, qui n'existe pas. charger() rend {} et, le fichier
-    etant ABSENT, diagnostique() rend None : aucun avertissement n'atteignait
-    la page, rien n'etait imprime, et la revue de A disparaissait de
-    l'interface sans un mot.
+    A.mp4-eclipse/decisions.json, qui n'existe pas. charger() rend {} et, le
+    fichier etant ABSENT, diagnostique() rend None : aucun avertissement
+    n'atteignait la page, rien n'etait imprime, et la revue de A
+    disparaissait de l'interface sans un mot.
 
     RECALCULE A CHAQUE REQUETE, comme _etapes_courantes et pour exactement la
     meme raison : POST /api/decision n'appelle pas porteur.recharge() -- il ne
@@ -718,7 +1371,7 @@ def _travail_vignettes(porteur, moteur):
     return travail, etat["nb_frames_estime"], lambda: compte(dossier)
 
 
-def _reglages_reanalyse(source, cache_path):
+def _reglages_reanalyse(source, cache_path, preset_effectif):
     """La resolution d'analyse a reprendre d'un cache valide, s'il y en a un.
 
     Sans cela, « Refaire l'analyse » peut RETOURNER LE SENS des decisions
@@ -757,20 +1410,47 @@ def _reglages_reanalyse(source, cache_path):
     estimate_radius est deterministe et redonnerait la meme valeur — sauf si
     le cache a ete produit avec un --radius EXPLICITE, que le cache
     n'enregistre pas comme tel. Le reprendre couvre ce cas aussi.
+
+    preset_effectif: the profile the coming analysis will run under. The
+    radius is NOT inherited across a profile change, see below.
+
+    The cache's light threshold is inherited on the same footing as the
+    scale, and for the same reason: a cache analyzed with an explicit
+    --seuil-lumiere carries a cut the profile does not, and remeasuring at
+    the profile's own cut would shift masse_captee — hence the verdicts,
+    hence the meaning of the stored decisions. It is inherited whenever
+    the cache carries one and the profile matches: passing back the value
+    the cache already holds is idempotent, so no comparison to the
+    profile's default is needed. Across a profile change it is dropped
+    with the radius: the new profile's own cut applies.
     """
     from .pipeline import charger_cache
 
     donnees = charger_cache(cache_path, source)
     if donnees is None:
         return {}
+    if donnees.get("preset") != preset_effectif:
+        # The radius was estimated under another strategy: reuse only the
+        # scale, and let the new profile's estimator run.
+        return {"scale": donnees["scale"]} if donnees.get("scale") else {}
     reglages = {}
     scale = donnees.get("scale")
     if scale is not None:
         reglages["scale"] = scale
-    rayon = donnees.get("radius")
     largeur_analyse = donnees.get("width")
-    if rayon is not None and largeur_analyse:
-        reglages["radius"] = rayon * probe(source)["width"] / largeur_analyse
+    largeur_source = probe(source)["width"] if largeur_analyse else None
+    # BOTH radii, through the same path. A dual-vote cache carries one per
+    # regime (see pipeline.analyze): carrying over only the bright one
+    # would let the dark one be rescanned, and that second scan can fall
+    # back to the bright radius for lack of a dark disc at its sampling --
+    # that is, REINTRODUCE the 24-px shake this radius exists to remove.
+    for cle in ("radius", "radius_dark"):
+        rayon = donnees.get(cle)
+        if rayon is not None and largeur_analyse:
+            reglages[cle] = rayon * largeur_source / largeur_analyse
+    seuil = (donnees.get("analysis_params") or {}).get("light_threshold")
+    if seuil is not None:
+        reglages["seuil_lumiere"] = seuil
     return reglages
 
 
@@ -785,15 +1465,20 @@ def _travail_analyse(porteur, moteur):
     # tache ; cette saisie ferme la fenetre qui reste entre son controle et
     # la bascule.
     cache_path = porteur.cache_path
+    # Taken WITH the state, for the same reason as cache_path: POST
+    # /api/preset can land between here and the thread starting, and the
+    # cache must record the profile these measures were actually taken
+    # under.
+    preset = etat["preset"]["effectif"]
     # Lu hors du fil de la tache : c'est une lecture, elle ne touche a rien
     # sur le disque, et un 409 Occupe n'a donc rien a annuler ici.
-    reglages = _reglages_reanalyse(etat["source"], cache_path)
+    reglages = _reglages_reanalyse(etat["source"], cache_path, preset)
 
     def travail():
         # Le total reste celui de l'estimation : analyze() n'en connait pas
         # (elle ne sait combien de frames qu'a la fin de sa boucle) et ne
         # passe qu'un compte fait.
-        analyze(etat["source"], cache_path, **reglages,
+        analyze(etat["source"], cache_path, **reglages, preset=preset,
                 progression=lambda fait, total=None: moteur.progression(fait))
 
     return travail, etat["nb_frames_estime"], None
@@ -1083,6 +1768,10 @@ def _travail_rendu(porteur, moteur, ecraser, png):
             # que ce que l'utilisateur vient de revoir, et la revue humaine
             # part a la poubelle sans un mot (voir Porteur).
             comptes = render(etat["source"], partiel, cache_path,
+                             # Same concordance check as the CLI: the cache
+                             # must have been analyzed under the profile in
+                             # force, whatever POST got us here.
+                             preset=etat["preset"]["effectif"],
                              seuils=porteur.seuils,
                              tolerance_bord=porteur.tolerance_bord,
                              seuil_masque=porteur.seuil_masque,
@@ -1291,6 +1980,8 @@ def fabrique_handler(porteur, moteur):
                 # frames. Le rechargement est le rappel de fin de tache.
                 corps = json.dumps(moteur.etat()).encode("utf-8")
                 return self._envoie(200, corps, "application/json")
+            if self.path == "/video" or self.path.startswith("/video?"):
+                return self._sert_video(etat)
             if self.path.startswith("/thumb/"):
                 nom = self.path[len("/thumb/"):]
                 try:
@@ -1308,6 +1999,82 @@ def fabrique_handler(porteur, moteur):
                 with open(chemin, "rb") as f:
                     return self._envoie(200, f.read(), "image/jpeg")
             return self._envoie(404, b"", "text/plain")
+
+        def _sert_video(self, etat):
+            """Streams the CURRENT source, for the raw-video player.
+
+            Only ever etat["source"] -- never a client-supplied path, there
+            is no query parameter naming a file. Streamed in fixed-size
+            chunks rather than read whole (sources reach 326 MB), and Range
+            support exists so an HTML5 <video> element's native seek bar can
+            jump without downloading everything before it -- browsers issue
+            range requests during ordinary playback too, not only on a seek.
+            """
+            source = etat["source"]
+            if source is None:
+                return self._envoie(404, b"", "text/plain")
+            try:
+                size = os.path.getsize(source)
+            except OSError:
+                # The state names a source that vanished from disk since:
+                # a 404 tells the truth, nothing to stream.
+                return self._envoie(404, b"", "text/plain")
+            mime_type, _ = mimetypes.guess_type(source)
+            mime_type = mime_type or "application/octet-stream"
+
+            start, end, partial = 0, size - 1, False
+            range_spec = self.headers.get("Range")
+            if range_spec:
+                m = _SINGLE_RANGE.match(range_spec)
+                if m and (m.group(1) or m.group(2)):
+                    raw_start, raw_end = m.groups()
+                    if raw_start == "":
+                        # Suffix form, "bytes=-N": the last N bytes.
+                        candidate_start = max(0, size - int(raw_end))
+                        candidate_end = size - 1
+                    else:
+                        candidate_start = int(raw_start)
+                        candidate_end = int(raw_end) if raw_end else size - 1
+                    if candidate_start >= size:
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{size}")
+                        self.send_header("Accept-Ranges", "bytes")
+                        self.send_header("Content-Length", "0")
+                        self.end_headers()
+                        return
+                    if candidate_end < candidate_start:
+                        # A reversed range ("bytes=100-50") is syntactically
+                        # invalid, not merely unsatisfiable: RFC 7233 says to
+                        # ignore it -- same as a header _SINGLE_RANGE does not
+                        # even match -- and fall through to a full 200 body
+                        # below. start/end/partial keep their full-body
+                        # defaults.
+                        pass
+                    else:
+                        start = candidate_start
+                        end = min(candidate_end, size - 1)
+                        partial = True
+                # Anything else (several ranges, no digit at all, or a
+                # reversed range) does not produce a usable range: the
+                # header is ignored, per RFC 7233, and the response falls
+                # through to a full 200 body below.
+
+            self.send_response(206 if partial else 200)
+            self.send_header("Content-Type", mime_type)
+            self.send_header("Accept-Ranges", "bytes")
+            if partial:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Content-Length", str(end - start + 1))
+            self.end_headers()
+            with open(source, "rb") as f:
+                f.seek(start)
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = f.read(min(VIDEO_CHUNK_SIZE, remaining))
+                    if not chunk:
+                        break                    # source truncated mid-read
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
 
         def _lit_corps_json(self):
             """L'objet JSON du corps, ou None s'il est inexploitable.
@@ -1458,6 +2225,72 @@ def fabrique_handler(porteur, moteur):
             corps = json.dumps(porteur.couleur).encode("utf-8")
             return self._envoie(200, corps, "application/json")
 
+        def _regle_cadrage(self, etat, requete):
+            """Installs the crop window size chosen with the mouse.
+
+            {"auto": true} clears the stored choice; {"taille": [w, h]} sets
+            it. Nothing else is accepted: the page never chooses the window's
+            POSITION -- it follows the disc, and always will (see
+            track.planifie_trajectoire).
+
+            THE TWO TOGETHER ARE A REFUSAL, not a precedence rule. A body
+            carrying both says two contradictory things, and either reading
+            of it silently discards half of what was asked; whichever half
+            this route picked would be right for one caller and wrong for
+            the next. 400 sends the question back to the client that can
+            answer it.
+
+            A running task is a REFUSAL, like /api/preset and unlike
+            /api/couleur. A render that has already started holds its own
+            copy of porteur.cadrage (see _travail_rendu) while the descriptor
+            written at delivery reads etat["reglages"], rebuilt by the reload
+            this route triggers: accepting here would make the two disagree
+            about the window actually applied, and the banner would call a
+            correct render stale -- or worse, a stale one correct.
+
+            Checked AFTER validation, the same order as /api/preset: a
+            malformed request is malformed whatever the server is doing.
+            """
+            if etat["source"] is None:
+                return self._envoie(400, b"", "text/plain")
+            if requete.get("auto") is True:
+                if requete.get("taille") is not None:
+                    return self._envoie(400, b"", "text/plain")
+                taille = None
+            else:
+                taille = _taille_demandee(requete.get("taille"),
+                                          etat["cadrage"])
+                if taille is None:
+                    return self._envoie(400, b"", "text/plain")
+            if moteur.etat()["etat"] == "en_cours":
+                return self._envoie(409, b"", "text/plain")
+            porteur.regle_cadrage(taille)
+            return self._envoie(200, b"{}", "application/json")
+
+        def _regle_preset(self, requete):
+            """Switches the porteur to this eclipse profile.
+
+            "auto" is a value like any other here: it drops the page's
+            choice, which falls back to the command line's preset when one
+            was given, and to the cache's preset or detection otherwise
+            (page choice > command line > cache > detection > "custom").
+
+            A running task is a REFUSAL, unlike /api/couleur: the profile
+            picks the pass-1 strategies the measures come from, so switching
+            under a running analysis would write a cache whose "preset" is
+            not what its numbers were measured with. Same field as
+            _change_source, and the same one Moteur.lance raises Occupe on.
+            """
+            from .presets import PRESET_NAMES
+
+            value = requete.get("preset")
+            if value not in PRESET_NAMES + ("auto",):
+                return self._envoie(400, b"", "text/plain")
+            if moteur.etat()["etat"] == "en_cours":
+                return self._envoie(409, b"", "text/plain")
+            porteur.regle_preset(value)
+            return self._envoie(200, b"{}", "application/json")
+
         def _change_source(self, requete):
             """Bascule le porteur sur la video demandee.
 
@@ -1523,14 +2356,19 @@ def fabrique_handler(porteur, moteur):
             if self.path == "/api/parcourir":
                 return self._parcourir(etat, self._lit_corps_json() or {})
             if self.path not in ("/api/decision", "/api/source",
-                                 "/api/tache", "/api/couleur"):
+                                 "/api/tache", "/api/couleur",
+                                 "/api/preset", "/api/cadrage"):
                 return self._envoie(404, b"", "text/plain")
-            # Une seule lecture du corps pour les quatre routes, et non une
+            # Une seule lecture du corps pour les six routes, et non une
             # par branche : c'est elle qui porte le plafond de taille, et le
             # flux ne se lit qu'une fois.
             requete = self._lit_corps_json()
             if requete is None:
                 return self._envoie(400, b"", "text/plain")
+            if self.path == "/api/cadrage":
+                return self._regle_cadrage(etat, requete)
+            if self.path == "/api/preset":
+                return self._regle_preset(requete)
             if self.path == "/api/source":
                 return self._change_source(requete)
             if self.path == "/api/tache":
@@ -1573,7 +2411,8 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
          taille=None, taille_sortie=None, interp_max=None,
          interp_deplacement_max=None,
          depassement_butee=None,
-         couleur=None, couleur_fenetre=None, couleur_amplitude=None):
+         couleur=None, couleur_fenetre=None, couleur_amplitude=None,
+         preset=None):
     """Lance le serveur local et ouvre le navigateur.
 
     source : la video a revoir, ou None pour ouvrir le viewer sur rien et en
@@ -1581,6 +2420,12 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
     ligne de commande, cache_path / decisions_path / dossier_vignettes sont
     ceux de la ligne de commande et rien ne change ; quand elle est choisie
     dans la page, les trois sont DERIVES d'elle (voir chemins_derives).
+
+    Dans les deux cas le Porteur cree le dossier de travail de la source et
+    y remonte les fichiers de l'ancienne disposition, en le disant au
+    terminal (voir _migre_disposition) : le rendu et l'export PNG lances
+    depuis la page y atterrissent, ligne de commande ou non. Un chemin
+    donne explicitement en --cache ou --decisions est laisse ou il est.
 
     seuils, tolerance_bord, seuil_masque : transmis tels quels a
     construit_etat, memes parametres de tri que pipeline.render — voir
@@ -1593,10 +2438,23 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
     les ignorer etait sans consequence. Depuis qu'elle lance le rendu, les
     ignorer donnerait un rendu qui ne correspond pas a ce qui a ete demande.
 
+    taille is the only one of the five the PAGE can change (with the mouse,
+    on the frame drawn over the central thumbnail: POST /api/cadrage). The
+    choice is stored per source, in its work folder, and then wins over
+    --taille: it is the more recent intent, exactly as a profile chosen in
+    the page wins over --preset. Returning to automatic deletes that file and
+    so hands control back to --taille, then to pipeline.tailles_defaut.
+
     couleur, couleur_fenetre, couleur_amplitude : la stabilisation de
     balance, memes parametres que pipeline.render, transmis au Porteur pour
     la meme raison que le cadrage — ils sement en plus les controles de la
     page, qui peut ensuite les modifier (POST /api/couleur).
+
+    preset : the eclipse profile named on the command line, or None to let
+    the cache - failing that, detection - decide. Same reason as the
+    cadrage: the viewer sub-parser has accepted --preset since it existed,
+    and swallowing it would run the page's analysis under another profile
+    than the one asked for. The page can still change it (POST /api/preset).
 
     moteur : moteur de taches a utiliser ; un neuf par defaut. L'injecter
     rend les tests possibles sans lancer de vrai traitement.
@@ -1611,7 +2469,8 @@ def sert(source, cache_path, decisions_path=None, dossier_vignettes=None,
                       interp_deplacement_max=interp_deplacement_max,
                       depassement_butee=depassement_butee,
                       couleur=couleur, couleur_fenetre=couleur_fenetre,
-                      couleur_amplitude=couleur_amplitude)
+                      couleur_amplitude=couleur_amplitude,
+                      preset=preset)
     httpd = ThreadingHTTPServer(("127.0.0.1", port),
                                 fabrique_handler(porteur, moteur))
     url = f"http://127.0.0.1:{httpd.server_port}/"

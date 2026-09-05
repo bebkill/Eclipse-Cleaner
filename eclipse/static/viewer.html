@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="fr">
 <meta charset="utf-8">
-<title>Revue des frames</title>
+<title>Eclipse Cleaner</title>
 <style>
   /* ------------------------------------------------------------------
      PALETTES. Deux themes complets. Le theme clair est la BASE, pose sur
@@ -444,6 +444,25 @@
     overflow-wrap: anywhere;
   }
   #source-message.refus { font-weight: 700; color: var(--rejet-texte); }
+  /* The chosen video takes several seconds to open (ffmpeg probe + eclipse
+     type detection, which decodes 24 frames): without this spinner, the
+     page looks frozen the whole time -- exactly the user report that gave
+     rise to this task. The ring spins via a border with three transparent
+     sides and the fourth in --accent; inline-block, before the text, never
+     alone (the text already carries the meaning, the ring is only a visual
+     reinforcement). */
+  #source-message.attente::before {
+    content: ""; display: inline-block; width: 10px; height: 10px;
+    margin-right: 6px; vertical-align: -1px;
+    border: 2px solid var(--bord-fort); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* The text alone is enough to say "waiting": no motion imposed on
+     someone who asked for less of it. */
+  @media (prefers-reduced-motion: reduce) {
+    #source-message.attente::before { animation: none; }
+  }
 
   /* -- filtres de revue, dans le rail eux aussi (demande utilisateur) --
      Ils sont dans leur PROPRE bloc et non dans #actions : la classe
@@ -529,10 +548,11 @@
   }
   /* Vide, cette zone doit disparaitre completement. C'est un conteneur
      flex et non une suite de marges : un enfant en display:none n'est pas
-     un element flex, il ne consomme donc PAS de gouttiere. Les quatre
-     enfants passent leur temps caches ([hidden] ou :empty) ; avec des
-     marges, chaque absence aurait laisse son blanc. #etat lui-meme n'est
-     jamais cache, poser un display dessus est donc sans danger. */
+     un element flex, il ne consomme donc PAS de gouttiere. Les six
+     enfants (#no-position et #apercu-source ajoutes depuis) passent leur
+     temps caches ([hidden] ou :empty) ; avec des marges, chaque absence
+     aurait laisse son blanc. #etat lui-meme n'est jamais cache, poser un
+     display dessus est donc sans danger. */
   #etat { display: flex; flex-direction: column; gap: 10px; }
   #erreur {
     padding: 9px 12px; border-radius: 8px;
@@ -544,6 +564,16 @@
     background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
   }
   #manquant p { margin: 0; }
+  /* Mirrors #manquant's panel look: #no-position is now a sibling, not a
+     child (see the HTML comment above it), so it needs its own copy of the
+     same padding/background/border rather than inheriting #manquant's.
+     No display: here, same reasoning as #resultat-tache below -- [hidden]
+     alone must decide visibility, and a display declaration at this
+     specificity would win over the browser's default and defeat it. */
+  #no-position {
+    margin: 0; padding: 9px 12px;
+    background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
+  }
   #avancement {
     display: none; align-items: center; gap: 12px;
     padding: 9px 12px; background: var(--panneau);
@@ -571,6 +601,41 @@
     width: fit-content; max-width: 100%; margin: 0;
     padding: 7px 12px; border-radius: 8px;
     background: var(--panneau); border: 1px solid var(--bord); font-size: 13px;
+  }
+
+  /* The raw source video player: same look as #manquant and #no-position
+     (--panneau background, --bord border) to stay a sibling panel rather
+     than a floating element. NO display: declaration here -- the element
+     carries [hidden], the same trap already documented three times in
+     this file. */
+  #apercu-source {
+    padding: 9px 12px;
+    background: var(--panneau); border: 1px solid var(--bord); border-radius: 8px;
+  }
+  #apercu-source summary {
+    cursor: pointer; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--texte-faible);
+  }
+  #apercu-source summary:hover { color: var(--texte); }
+  #apercu-source[open] summary { margin-bottom: 8px; }
+  /* Height capped: a tall vertical source must not push the rest of the
+     column off-screen. max-width: 100% covers the horizontal case, where
+     the rail is narrow. */
+  #apercu-video { display: block; max-width: 100%; max-height: 40vh; }
+  /* The custom bar: buttons pick up the shared `button` rule above as-is
+     (same look, no extra classes needed), only the row layout is added
+     here. Time display in the same muted color as the rest of the panel's
+     secondary text. */
+  #apercu-controles {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  }
+  #apercu-timeline { flex: 1 1 auto; accent-color: var(--accent); }
+  #apercu-temps {
+    font-size: 12px; color: var(--texte-faible);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  #apercu-indisponible {
+    margin: 8px 0 0; font-size: 12px; color: var(--texte-faible);
   }
 
   /* La pellicule n'a rien a montrer tant que la source n'est pas prete :
@@ -636,6 +701,110 @@
   .vignette-boite.rejetee .etiquette { background: var(--voile-fort); }
   .motif { color: var(--motif); font-weight: 600; }
 
+  /* -- THE CROP FRAME, drawn over the central thumbnail --
+     It shows, at the thumbnail's scale, the window the render will actually
+     cut out for THIS frame: its POSITION follows the disc (see
+     track.planifie_trajectoire, replayed by cropWindowCenter) and is never
+     the user's to choose; its SIZE is dragged by a corner handle -- FOUR of
+     them now, one per corner, but all four still do the exact same
+     symmetric, center-anchored, aspect-locked resize the single handle did
+     before them (see cropSizeFrom): only the pointer math's sign flips per
+     corner. Dragging a handle is still the only gesture this feature has:
+     no rotation, no moving the rectangle by hand -- both stay out, on
+     purpose, of what her prototype otherwise offered.
+
+     Visual design follows @mireianievas' ROI prototype (issue #1): cyan
+     glow, corner handles, dimension badge, center crosshair.
+     FIXED colours, not theme tokens, through this whole block: like
+     .etiquette above, this sits on an unknown photo rather than on the
+     page's own background, and her cyan-on-black-outline scheme is legible
+     over a bright frame and a night sky alike -- the same property that
+     made it a good fit here, not just a borrowed look. */
+  #cadre-recadrage {
+    position: absolute; box-sizing: border-box;
+    border: 2px solid #00e5ff;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.4), inset 0 0 12px rgba(0, 229, 255, 0.15);
+    background: rgba(0, 229, 255, 0.05);
+    /* The frame itself cannot be grabbed: it covers the thumbnail and would
+       otherwise swallow the hover on the image. Only the handles put
+       pointer-events back to auto. */
+    pointer-events: none;
+  }
+  /* The tracked disc center for the frame on display -- cropWindowCenter's
+     own result, i.e. exactly the point the rectangle above is centered on.
+     The rectangle already shows the WINDOW; this crosshair names the single
+     point inside it the pipeline is actually following, frame after frame. */
+  .cadrage-croix-v, .cadrage-croix-h {
+    position: absolute; pointer-events: none;
+    background: rgba(0, 229, 255, 0.6);
+  }
+  .cadrage-croix-v { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
+  .cadrage-croix-h { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
+  .cadrage-croix-point {
+    position: absolute; left: 50%; top: 50%; width: 7px; height: 7px;
+    border-radius: 50%; background: #00e5ff; border: 1.5px solid #000;
+    transform: translate(-50%, -50%); pointer-events: none;
+  }
+  /* INSIDE the frame, against its own corner, rather than straddling the
+     stroke: the thumbnail hides its overflow (.vignette-boite, overflow:
+     hidden), so a handle hanging outside would be clipped away that much
+     sooner.
+     KNOWN LIMITATION, and inset does not cure it: the window may legitimately
+     sit up to `depassement` beyond the source edges (400 px by default, see
+     pipeline.DEPASSEMENT_BUTEE_DEFAUT and track.planifie_trajectoire, where
+     the replicated band is filled from the edge). When the disc is close
+     enough to an edge for that to happen, whichever corner of the frame
+     faces that edge -- its handle included -- is clipped by the thumbnail
+     and cannot be grabbed on that frame; the other three stay reachable.
+     Stepping to a frame where the window sits inside the source gives every
+     handle back; the size is global, so it can be set from any frame.
+     touch-action: none, without which the browser reads the gesture as a
+     scroll and sends no pointermove at all.
+     THE SAME OVERSHOOT clips the dimension badge too, in two ways neither
+     .cadrage-mesure-dedans nor centering can cure: when the rect's top
+     overshoots the thumbnail's own top edge by more than ~6px (the flipped
+     position's own offset), the flipped badge is itself carried past that
+     edge and clipped in turn; and, being horizontally centered, it clips
+     sideways the same way when a narrow rect sits close enough to the
+     thumbnail's left or right edge. Both are accepted as inherent to the
+     overshoot geometry, exactly like the handle above -- step to a frame
+     where the window sits inside the source to read it. */
+  .poignee-recadrage {
+    position: absolute; width: 9px; height: 9px;
+    background: #00e5ff; border: 1.5px solid #000; border-radius: 2px;
+    box-sizing: border-box; pointer-events: auto; touch-action: none;
+    z-index: 3;
+  }
+  .poignee-recadrage.nw { top: -4.5px; left: -4.5px; cursor: nwse-resize; }
+  .poignee-recadrage.se { bottom: -4.5px; right: -4.5px; cursor: nwse-resize; }
+  .poignee-recadrage.ne { top: -4.5px; right: -4.5px; cursor: nesw-resize; }
+  .poignee-recadrage.sw { bottom: -4.5px; left: -4.5px; cursor: nesw-resize; }
+  /* The live dimension badge -- ALWAYS on, not only while a handle is being
+     dragged: a pill floating above the rect's top edge, dark on cyan
+     exactly like her design, reading "452 × 802" and, once that matches the
+     size the server would pick on its own, "452 × 802 · auto" (the word via
+     t("cadrage_auto"), never hardcoded -- same key, same reasoning, as
+     paintCropLabel's own rule just below in this file). Dynamic text, hence
+     no data-t here either -- same trap as #cadrage-etat above. It is rebuilt
+     from scratch, current language included, every time dessineBandeau
+     replays placeCropFrame -- which rafraichitTextesDynamiques already
+     triggers (via dessine()) on a language switch, so it needs no repaint
+     hook of its own.
+     Flips INSIDE the rect (see .cadrage-mesure-dedans, set from `draw()`
+     against the real, measured geometry) when the rectangle sits close
+     enough to the thumbnail's own top edge that the pill above it would be
+     clipped by that same overflow: hidden. */
+  #cadrage-mesure {
+    position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85); color: #00e5ff;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
+    border: 1px solid rgba(0, 229, 255, 0.5); white-space: nowrap;
+    pointer-events: none; z-index: 2;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  }
+  #cadrage-mesure.cadrage-mesure-dedans { top: 6px; }
+
   /* -- etat de la frame courante, colle sous la pellicule -- */
   /* La pastille etait poussee a l'extreme droite de la barre de transport,
      loin de la vignette dont elle parle. Elle reste ici, contre l'image et
@@ -656,6 +825,15 @@
     color: var(--texte-faible); font-size: 12.5px;
     font-variant-numeric: tabular-nums;
   }
+  /* The crop label and its way back to the recommended size, in the strip's
+     footer: they speak about the window drawn on the thumbnail just above,
+     not about the rail's processing chain. Explicit [hidden] guard, like
+     label.filtre and #couleur-reglages: an author display rule would
+     otherwise beat the browser's own. */
+  #cadrage-controles { display: flex; align-items: center; gap: 6px; }
+  #cadrage-controles[hidden] { display: none; }
+  #cadrage-etat { color: var(--texte-faible); font-size: 12.5px; }
+  #cadrage-auto { padding: 2px 9px; line-height: 1.3; font-size: 14px; }
 
   /* -- timeline -- */
   /* Le canvas peint chaque frame selectionnee sur toute la hauteur : c'est
@@ -712,7 +890,10 @@ try {
 </script>
 
 <aside id="rail">
-  <h1 data-t="titre_page">Revue des frames</h1>
+  <!-- NO data-t: the eclipse-type suffix is dynamic (see updateTitle),
+       same trap as #source-courante just below -- appliqueLangue's [data-t]
+       loop would overwrite the suffix on every language change. -->
+  <h1 id="rail-title">Eclipse Cleaner</h1>
 
   <!-- L'ETAPE 0. Le viewer peut s'ouvrir sur RIEN (« python -m eclipse
        viewer » sans argument) : la page disait alors « cette source n'est
@@ -743,6 +924,18 @@ try {
     <!-- role=status : l'attente pendant que la boite est ouverte et les
          refus doivent etre annonces, pas seulement peints. -->
     <div id="source-message" role="status" hidden></div>
+    <!-- Hidden until a source exists (see chargeFrames): the eclipse type
+         only makes sense once frames have been extracted from something. -->
+    <label id="eclipse-type-row" hidden>
+      <span data-t="type_libelle">Type d'éclipse</span>
+      <select id="eclipse-type">
+        <option value="auto" data-t="type_auto">Auto</option>
+        <option value="sun" data-t="type_sun">Soleil</option>
+        <option value="moon" data-t="type_moon">Lune</option>
+        <option value="planetary" data-t="type_planetary">Planétaire</option>
+        <option value="custom" data-t="type_custom">Personnalisé</option>
+      </select>
+    </label>
   </section>
 
   <section id="panneau-taches">
@@ -872,6 +1065,15 @@ try {
         <span data-t="sans_source_apres">dans le rail, a gauche, pour designer la video a traiter.</span></p>
       <p id="manque-prete"><span data-t="manque_prete_intro">Cette source n'est pas encore prete : </span><span id="liste-manque"></span></p>
     </div>
+    <!-- Sibling of #manquant, NOT a child: its condition (d.pret ===
+         true) is the exact opposite of #manquant's, which chargeFrames
+         hides as soon as the source is ready (elManquant.hidden = d.pret).
+         An ancestor's [hidden] suppresses every descendant regardless of
+         its own [hidden] state, so living inside #manquant would make
+         this paragraph unshowable -- the same trap the comment near
+         #actions documents for the step buttons, which had to move out of
+         #manquant for the same reason. -->
+    <p id="no-position" hidden></p>
     <div id="avancement" hidden>
       <span id="avancement-genre"></span>
       <progress id="barre" max="100" value="0"></progress>
@@ -879,6 +1081,24 @@ try {
       <button id="annuler" data-t="bouton_annuler">Annuler</button>
     </div>
     <p id="resultat-tache" hidden></p>
+    <!-- Sixth child, same [hidden]-only convention as #no-position above:
+         the raw-video player. Its fold state (open/closed) belongs to the
+         viewer, not to any state machine here -- choisitSource() opens it
+         once per source change, and nothing else ever touches .open. -->
+    <details id="apercu-source" hidden>
+      <summary data-t="apercu_titre">Vidéo source brute</summary>
+      <video id="apercu-video" preload="metadata"></video>
+      <!-- Custom playback bar, replacing the native <video controls> chrome
+           removed above: play/pause, stop, and a manual timeline only --
+           no volume or fullscreen, per the feature request. -->
+      <div id="apercu-controles">
+        <button id="apercu-lecture"></button>
+        <button id="apercu-stop" data-t="apercu_stop">Stop</button>
+        <input type="range" id="apercu-timeline" min="0" value="0" step="0.1">
+        <span id="apercu-temps">0:00 / 0:00</span>
+      </div>
+      <p id="apercu-indisponible" hidden></p>
+    </details>
   </div>
 
   <div id="scene">
@@ -888,6 +1108,22 @@ try {
       <button id="statut" data-t-title="bouton_statut_infobulle"
               title="Basculer conserver / ecarter (k)"></button>
       <div id="infos"></div>
+      <!-- The crop: what the rectangle drawn on the central thumbnail says,
+           and the way back to the recommended size. Here, against the image
+           it speaks about, and not in the rail, which only carries what
+           DRIVES the processing chain. -->
+      <div id="cadrage-controles" hidden>
+        <!-- NO data-t on this node: paintCropLabel writes "Cadrage : auto"
+             or "Cadrage : personnalise (60x100)" into it, and appliqueLangue's
+             [data-t] loop would erase that at every language change -- the
+             same trap as #source-courante and the three step buttons. The
+             three keys (cadrage_libelle, cadrage_auto, cadrage_custom) are
+             used as literal t() calls in paintCropLabel, which
+             rafraichitTextesDynamiques calls back. -->
+        <span id="cadrage-etat"></span>
+        <button id="cadrage-auto" data-t-title="cadrage_auto_infobulle"
+                title="Revenir au cadrage recommande">↺</button>
+      </div>
     </div>
 
     <canvas id="timeline" height="40"></canvas>
@@ -976,7 +1212,7 @@ function appliqueLangue() {
     el.textContent = t(el.dataset.t);
   for (const el of document.querySelectorAll("[data-t-title]"))
     el.title = t(el.dataset.tTitle);
-  document.title = t("titre_page");
+  updateTitle();
   if (typeof rafraichitTextesDynamiques === "function")
     rafraichitTextesDynamiques();
 }
@@ -1022,6 +1258,34 @@ const cacheImg = new Map();
 // chargee ni a la position courante. Vide tant qu'aucun rendu n'est sur le
 // disque — il n'y a alors rien a quoi comparer.
 let divergentes = new Set();
+
+// The crop window as /api/frames describes it: {taille, auto, source,
+// sortie, depassement, traj}. Null until a source has answered, and without
+// `traj` until its analysis exists.
+//
+// It is the OVERLAY's data (see placeCropFrame) and the footer label's MEMO
+// at the same time: paintCropLabel replays it on every language change,
+// exactly as derniereManque and lastDiagnostic are replayed, so that the
+// label is repainted without asking the server again.
+let crop = null;
+
+// True while the corner handle is being dragged. Read by the global keydown
+// handler: a drag owns the keyboard as well as the pointer, or the arrow
+// keys would step the filmstrip out from under the rectangle being sized.
+let cropDragging = false;
+
+// The window's aspect ratio must stay within this of the OUTPUT ratio -- the
+// server refuses anything further (see viewer.TOLERANCE_RAPPORT, 0.005) and
+// so, at render time, the final upscale would stretch the disc into an
+// ellipse. Slightly tighter than the server's own bound so that a size this
+// page computes can never land on the wrong side of a rounding.
+const CROP_RATIO_TOLERANCE = 0.004;
+
+// Smallest window this page will let the handle produce, as a fraction of
+// the source width. Not a server rule (it accepts anything from 2 px up):
+// it stops a careless drag from collapsing the window to a few pixels, a
+// state whose handle would then be almost impossible to grab again.
+const CROP_MIN_FRACTION = 0.1;
 
 // Seul endroit ou la regle d'etat effectif existe cote client.
 function conservee(f) {
@@ -1330,6 +1594,26 @@ document.addEventListener("keydown", (e) => {
   // absence serait un defaut silencieux, decouvert en tapant dedans.
   const cible = e.target;
   if (cible && cible.tagName === "INPUT" && cible.type !== "checkbox") return;
+  // The raw player's own controls (play/pause, stop, timeline) live inside
+  // #apercu-controles and must keep their keys: without this, the global
+  // Space shortcut above would fight the play button's own Space/Enter
+  // activation, and dragging the timeline with arrow keys would also step
+  // the filmstrip's selection. No such guard existed for any other form
+  // control before this bar (the eclipse-type <select> and the filter
+  // checkboxes just happen not to collide with the keys they're focused
+  // for); this one is scoped narrowly to the new bar rather than widened
+  // to every control on the page.
+  // #cadrage-controles joins it for the same reason: its reset button is
+  // focusable, and Space on it would both activate the button and start
+  // playback. The list is still a list of NAMED bars, not "every control on
+  // the page" -- the filter checkboxes and the type <select> keep passing
+  // through, as they always have.
+  if (cible && cible.closest
+      && cible.closest("#apercu-controles, #cadrage-controles")) return;
+  // A crop drag in progress: the pointer is captured, but keystrokes are
+  // not, and stepping the filmstrip here would rebuild the very rectangle
+  // being sized.
+  if (cropDragging) return;
   if (e.key === " ") { e.preventDefault(); lecture(!etat.lecture); }
   else if (e.key === "ArrowRight") pasSelection(+1);
   else if (e.key === "ArrowLeft") pasSelection(-1);
@@ -1366,6 +1650,9 @@ const elInfos = document.getElementById("infos");
 const elFiltreRetenues = document.getElementById("chk-filtre-retenues");
 const elFiltreNonRetenues = document.getElementById("chk-filtre-non-retenues");
 const elFiltreModifiees = document.getElementById("chk-filtre-modifiees");
+const elCropControls = document.getElementById("cadrage-controles");
+const elCropState = document.getElementById("cadrage-etat");
+const elCropAuto = document.getElementById("cadrage-auto");
 
 // Reaction commune aux trois cases de filtre (clic souris ou raccourci
 // clavier r/e/m, qui basculent .checked puis appellent ceci) : un seul
@@ -1435,6 +1722,311 @@ document.getElementById("btn-prec").addEventListener("click", () => pasSelection
 document.getElementById("btn-suiv").addEventListener("click", () => pasSelection(+1));
 elStatut.addEventListener("click", () => bascule());
 
+// -- THE CROP WINDOW, drawn over the central thumbnail.
+//
+// What the render will actually cut out of the source, at the thumbnail's
+// scale. Two halves, and only one of them is the user's:
+//   - the POSITION follows the disc, frame by frame, and is never chosen
+//     here (see cropWindowCenter);
+//   - the SIZE is dragged by the corner handle, and is the existing `taille`
+//     of the pipeline -- the same value --taille sets on the command line.
+
+// Nearest even integer, at least 2: yuv420p refuses odd dimensions, and the
+// server refuses them with it (see viewer._taille_demandee).
+function evenRound(v) {
+  return Math.max(2, 2 * Math.round(v / 2));
+}
+
+// Window center for frame n at this size, in SOURCE pixels.
+//
+// Mirrors track.planifie_trajectoire on the server: the measured disc
+// center, clipped to the corridor the window can reach -- half a window in
+// from each edge, widened by `depassement`, the overshoot the render fills
+// by edge replication. The rectangle therefore sits exactly where the
+// render will place it, including where it stops following the disc, which
+// is the one thing a rectangle drawn in the middle of the image could never
+// show.
+function cropWindowCenter(n, w, h) {
+  const srcW = crop.source[0], srcH = crop.source[1];
+  const p = (crop.traj && crop.traj[n]) || [srcW / 2, srcH / 2];
+  const d = crop.depassement;
+  return [
+    Math.min(Math.max(p[0], w / 2 - d), srcW - w / 2 + d),
+    Math.min(Math.max(p[1], h / 2 - d), srcH - h / 2 + d),
+  ];
+}
+
+// The even, in-range window size a pointer at (sx, sy) SOURCE pixels asks
+// for, anchored on `anchor`. Returns null when nothing acceptable comes out.
+//
+// The corner handle drives BOTH axes -- whichever of the two asks for the
+// larger window wins -- but the height is always derived from the width, so
+// the aspect stays locked on the output ratio. The width then steps DOWN by
+// 2 until the pair passes the same checks the server applies: rounding two
+// dimensions to even can push a small window just outside the ratio
+// tolerance, and a drag must never end in a 400.
+function cropSizeFrom(sx, sy, anchor) {
+  const srcW = crop.source[0], srcH = crop.source[1];
+  const outW = crop.sortie[0], outH = crop.sortie[1];
+  const rapport = outW / outH;
+  const minW = Math.min(srcW, Math.max(2, evenRound(srcW * CROP_MIN_FRACTION)));
+  let want = Math.max(2 * Math.abs(sx - anchor[0]),
+                      2 * Math.abs(sy - anchor[1]) * rapport);
+  want = Math.min(want, srcW, srcH * rapport);
+  for (let w = evenRound(Math.max(minW, want)); w >= minW; w -= 2) {
+    const h = evenRound(w * outH / outW);
+    if (w <= srcW && h <= srcH
+        && Math.abs((w / h) / rapport - 1) <= CROP_RATIO_TOLERANCE)
+      return [w, h];
+  }
+  return null;
+}
+
+// The four corners a resize handle can sit on, "north/south" then
+// "east/west" -- the only list that names them; placeCropFrame reads it to
+// create the four .poignee-recadrage elements, one per corner.
+const HANDLE_COINS = ["nw", "ne", "se", "sw"];
+
+// Where a given corner of a `largeur` x `hauteur` window centered on
+// `anchor` sits, in SOURCE pixels. The only thing that tells the four
+// handles apart: cropSizeFrom itself takes the ABSOLUTE distance from the
+// anchor on each axis, so once grab is measured from the correct corner, a
+// drag away from the center -- whichever corner it starts from -- always
+// reads as "grow", and one back towards it always reads as "shrink".
+function cropCornerRef(coin, anchor, largeur, hauteur) {
+  const sx = coin[1] === "e" ? 1 : -1;
+  const sy = coin[0] === "s" ? 1 : -1;
+  return [anchor[0] + sx * largeur / 2, anchor[1] + sy * hauteur / 2];
+}
+
+// How far the dimension badge (#cadrage-mesure) sits above the rectangle's
+// own top edge, in CSS pixels -- the "top: -26px" rule in the stylesheet,
+// named here so placeCropFrame's draw() can decide, from the frame's REAL
+// measured top, whether that pill would be clipped by the thumbnail's own
+// overflow: hidden and must flip inside instead (see
+// .cadrage-mesure-dedans).
+const CADRAGE_BADGE_DEGAGEMENT = 26;
+
+// Attaches the rectangle, its crosshair, its badge and its four handles to
+// the central thumbnail's box. Called from dessineBandeau, so it is redone
+// every time the strip is rebuilt -- a new position, a new zoom, a window
+// resized by the layout: there is no separate observer to keep in step, and
+// no stale rectangle can survive, since dessineBandeau empties #bandeau
+// first.
+function placeCropFrame(boite, n) {
+  if (!crop || !crop.traj) return;
+  const srcW = crop.source[0], srcH = crop.source[1];
+  let w = crop.taille[0], h = crop.taille[1];
+  // THE PADDING BOX, never the width dessineBandeau just set. Everything on
+  // this page is box-sizing: border-box, and the central thumbnail carries a
+  // 4px border (.vignette-boite.centre): style.width = baseL therefore
+  // describes the BORDER box, while the <img> fills, and this absolutely
+  // positioned rectangle is laid out against, the padding box -- baseL minus
+  // 8. Measuring the wrong one drew the rectangle 2.7% too large on a full
+  // strip and up to 20% too large on a small one, silently overstating what
+  // the render keeps.
+  const boxW = boite.clientWidth, boxH = boite.clientHeight;
+  if (!boxW || !boxH) return;
+  // object-fit: cover on the thumbnail (see .vignette-boite img): the image
+  // is scaled to COVER the box and the overflow is cropped, so a single
+  // scale for both axes plus a centering offset for what the cover cuts
+  // away. A box that keeps the source's aspect ratio -- the ordinary case,
+  // dessineBandeau sizing its boxes on it -- gives k = boxW / srcW and no
+  // offset at all.
+  const k = Math.max(boxW / srcW, boxH / srcH);
+  const ox = (boxW - srcW * k) / 2, oy = (boxH - srcH * k) / 2;
+
+  // Viewport coordinates of the padding box's top-left corner. clientLeft /
+  // clientTop are the border widths: getBoundingClientRect gives the BORDER
+  // box, so without them every pointer reading is off by the 4px border --
+  // about 28 source pixels of size bias on a typical strip.
+  function origine() {
+    const r = boite.getBoundingClientRect();
+    return [r.left + boite.clientLeft, r.top + boite.clientTop];
+  }
+  // A pointer event, in SOURCE pixels: the inverse of the cover mapping.
+  function versSource(e) {
+    const o = origine();
+    return [(e.clientX - o[0] - ox) / k, (e.clientY - o[1] - oy) / k];
+  }
+
+  const cadre = document.createElement("div");
+  cadre.id = "cadre-recadrage";
+  const croixV = document.createElement("div");
+  croixV.className = "cadrage-croix-v";
+  const croixH = document.createElement("div");
+  croixH.className = "cadrage-croix-h";
+  const croixPoint = document.createElement("div");
+  croixPoint.className = "cadrage-croix-point";
+  const mesure = document.createElement("div");
+  mesure.id = "cadrage-mesure";
+  cadre.appendChild(croixV);
+  cadre.appendChild(croixH);
+  cadre.appendChild(croixPoint);
+  cadre.appendChild(mesure);
+  // FOUR handles, one per corner -- HANDLE_COINS below is the only place
+  // that names them. Every one is wired to the exact same listeners further
+  // down; only cropCornerRef's sign flips between them.
+  const poignees = {};
+  for (const coin of HANDLE_COINS) {
+    const p = document.createElement("div");
+    p.className = "poignee-recadrage " + coin;
+    cadre.appendChild(p);
+    poignees[coin] = p;
+  }
+  boite.appendChild(cadre);
+
+  // The center is FROZEN at pointerdown and reused for the whole gesture:
+  // the rectangle then grows symmetrically around the point it was grabbed
+  // from, instead of sliding as the corridor of cropWindowCenter widens
+  // with the size. The reload that follows the release puts it back on the
+  // real, size-dependent center.
+  let anchor = null;
+  // How far the pointer sat from the rectangle's OWN corner (the one being
+  // dragged, per cropCornerRef) when it was grabbed, in source pixels.
+  // Subtracted from every later reading, so the corner does not JUMP to the
+  // cursor on the first pointermove: the handle is 9px wide and one is
+  // never grabbed dead centre.
+  let grab = [0, 0];
+
+  // Badge text and, when it would be clipped by the thumbnail's own
+  // overflow: hidden (the rect sitting close enough to its top edge),
+  // whether the pill flips inside the rect instead of floating above it --
+  // see #cadrage-mesure and .cadrage-mesure-dedans in the stylesheet.
+  function paintBadge(largeur, hauteur, topPx) {
+    const estAuto = crop.auto && largeur === crop.taille[0] && hauteur === crop.taille[1];
+    mesure.textContent = largeur + " × " + hauteur
+      + (estAuto ? " · " + t("cadrage_auto") : "");
+    mesure.classList.toggle("cadrage-mesure-dedans", topPx < CADRAGE_BADGE_DEGAGEMENT);
+  }
+
+  function draw(largeur, hauteur, centre) {
+    const c = centre || cropWindowCenter(n, largeur, hauteur);
+    const top = oy + (c[1] - hauteur / 2) * k;
+    cadre.style.left = (ox + (c[0] - largeur / 2) * k) + "px";
+    cadre.style.top = top + "px";
+    cadre.style.width = (largeur * k) + "px";
+    cadre.style.height = (hauteur * k) + "px";
+    paintBadge(largeur, hauteur, top);
+  }
+  draw(w, h, null);
+
+  // A capture already released by the browser (pointercancel) throws when
+  // released again; the gesture is over either way, so every caller below
+  // swallows that.
+  function releve(e, poignee) {
+    if (!cropDragging) return;
+    cropDragging = false;
+    try { poignee.releasePointerCapture(e.pointerId); } catch (err) {}
+    if (w === crop.taille[0] && h === crop.taille[1]) {
+      // Nothing to record. Redraw on the REAL center rather than on the
+      // frozen anchor, so the rectangle does not stay a few pixels off
+      // after a gesture that changed nothing.
+      draw(w, h, null);
+      return;
+    }
+    sendCrop({ taille: [w, h] });
+  }
+
+  for (const coin of HANDLE_COINS) {
+    const poignee = poignees[coin];
+    poignee.addEventListener("pointerdown", (e) => {
+      // preventDefault: without it the browser starts its own drag-select on
+      // the thumbnail, and the pointermove stream stops halfway through.
+      e.preventDefault();
+      poignee.setPointerCapture(e.pointerId);
+      cropDragging = true;
+      anchor = cropWindowCenter(n, w, h);
+      const coinPos = cropCornerRef(coin, anchor, w, h);
+      const p = versSource(e);
+      grab = [p[0] - coinPos[0], p[1] - coinPos[1]];
+    });
+
+    poignee.addEventListener("pointermove", (e) => {
+      if (!cropDragging) return;
+      const p = versSource(e);
+      const taille = cropSizeFrom(p[0] - grab[0], p[1] - grab[1], anchor);
+      if (!taille) return;
+      w = taille[0]; h = taille[1];
+      draw(w, h, anchor);
+    });
+
+    poignee.addEventListener("pointerup", (e) => releve(e, poignee));
+    poignee.addEventListener("pointercancel", (e) => releve(e, poignee));
+  }
+}
+
+// THE SAFETY NET, and the second half of the fix documented at the top of
+// dessineBandeau. A gesture can end without the handle's own listeners ever
+// running: the strip is rebuilt mid-drag (the handle leaves the document,
+// its capture released implicitly), or the pointer is released over another
+// window. cropDragging would then stay true and every keyboard shortcut
+// would be dead behind its guard, with no way back but a lucky second drag.
+//
+// It only CLEARS the flag: it never posts a size. A drag whose handle is
+// gone has no rectangle left to speak for, and the strip that removed it is
+// about to draw the size the server still holds. Bound on window, in the
+// bubble phase, so the handle's own listener -- which does post -- always
+// runs first and leaves nothing here to do.
+window.addEventListener("pointerup", () => { cropDragging = false; });
+window.addEventListener("pointercancel", () => { cropDragging = false; });
+
+// « Cadrage : auto » / « Cadrage : personnalise (60x100) ». Dynamic, hence
+// no data-t on #cadrage-etat: rafraichitTextesDynamiques replays this from
+// `crop`, the memo, at every language change -- the house pattern of
+// afficheSource and the step buttons.
+function paintCropLabel() {
+  elCropControls.hidden = !crop;
+  if (!crop) return;
+  // TWO entirely literal calls to t(), never t(crop.auto ? "a" : "b"): a key
+  // built from a ternary is invisible to _cles_employees
+  // (tests/test_langues.py) and both keys would have to be declared as
+  // server-side ones for nothing. Same reasoning as dessine()'s
+  // etat_conservee / etat_ecartee.
+  const valeur = crop.auto
+    ? t("cadrage_auto")
+    : t("cadrage_custom") + " (" + crop.taille[0] + "×" + crop.taille[1] + ")";
+  // " : " composed here rather than carried by the key, exactly like the
+  // theme button's own label just below in this file.
+  elCropState.textContent = t("cadrage_libelle") + " : " + valeur;
+}
+
+// POSTs the crop size (or {auto: true}) and reloads: the change makes an
+// existing render stale, and it is chargeFrames that reports the « a
+// refaire » state -- the same round trip as envoieCouleur, for the same
+// reason.
+//
+// The review position is put BACK afterwards. chargeFrames returns to frame
+// 0, which is right when a source or a color setting changes, but here it
+// would throw away the very frame whose framing was being judged -- the
+// user is looking at the rectangle on THAT image.
+async function sendCrop(demande) {
+  const pos = etat.pos;
+  let r;
+  try {
+    r = await fetch("/api/cadrage", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(demande),
+    });
+  } catch (e) {
+    return signaleServeurInjoignable();
+  }
+  if (!r.ok) {
+    // 409 (a task is running) or 400 (a size the server refuses): the page
+    // does not keep the refused value, chargeFrames below repaints the one
+    // in force.
+    signaleErreur("erreur_requete_refusee");
+    await chargeFrames();
+    if (etat.frames.length) vaVers(Math.min(pos, etat.frames.length - 1));
+    return;
+  }
+  effaceErreur();
+  await chargeFrames();
+  if (etat.frames.length) vaVers(Math.min(pos, etat.frames.length - 1));
+}
+
+elCropAuto.addEventListener("click", () => sendCrop({ auto: true }));
+
 // Reconstruit le bandeau de vignettes autour de etat.pos, sur 2*rayon+1
 // cases (la centrale en taille pleine, les voisines reduites a 55 % et
 // attenuees). Les <img> viennent du cache partage (vignette()) : jamais
@@ -1446,8 +2038,23 @@ elStatut.addEventListener("click", () => bascule());
 // avant, imposait sa loi a la page et la faisait deborder des que la
 // fenetre etait un peu basse.
 function dessineBandeau() {
+  // THE LINE BELOW ENDS ANY DRAG IN PROGRESS, so the flag must fall with
+  // it. Emptying #bandeau removes the captured handle from the document,
+  // which implicitly releases its pointer capture: the pointerup never
+  // reaches the listener, `releve` never runs, and cropDragging would stay
+  // true forever -- with every keyboard shortcut dead behind its guard.
+  // Three ordinary events rebuild the strip from under a drag: the playback
+  // interval, the #bandeau ResizeObserver, and the chargeFrames that
+  // follows a task. The window-level safety net below (see the pointerup /
+  // pointercancel listeners near placeCropFrame) covers the cases where the
+  // gesture ends outside the handle instead.
+  cropDragging = false;
   elBandeau.innerHTML = "";
   const rayon = etat.rayon;
+  // The central thumbnail's frame number and its box, or null when it holds
+  // no frame at all. Read after the loop, where the box is finally in the
+  // document and can be measured (see the placeCropFrame call).
+  let centrale = null, boiteCentrale = null;
   // Deux bornes, plus le plafond de la taille reelle du .jpg :
   //   - la HAUTEUR laissee au bandeau par la grille ;
   //   - la LARGEUR de la rangee entiere, gouttieres comprises, pour que les
@@ -1526,9 +2133,20 @@ function dessineBandeau() {
         etiquette.appendChild(motif);
       }
       boite.appendChild(etiquette);
+      if (estCentre) { centrale = n; boiteCentrale = boite; }
     }
     elBandeau.appendChild(boite);
   }
+  // The crop frame, on the CENTRAL thumbnail only: it describes the frame
+  // being reviewed. Placed here, inside the strip's own rebuild, it
+  // re-places itself on every move, every zoom and every window resize --
+  // there is no second mechanism to keep in step.
+  //
+  // AFTER the loop, so the box is in the document: placeCropFrame measures
+  // the PADDING box (clientWidth/clientHeight), which reads 0 on a detached
+  // node. Not a style preference -- see its own comment for why the padding
+  // box, and not the width we just set, is the one that matters.
+  if (centrale !== null) placeCropFrame(boiteCentrale, centrale);
 }
 
 function dessine() {
@@ -1650,9 +2268,20 @@ const elAnnuler = document.getElementById("annuler");
 const elResultatTache = document.getElementById("resultat-tache");
 const elSansSource = document.getElementById("sans-source");
 const elManquePrete = document.getElementById("manque-prete");
+const elNoPosition = document.getElementById("no-position");
 const elSourceCourante = document.getElementById("source-courante");
 const elChoisirSource = document.getElementById("choisir-source");
 const elSourceMessage = document.getElementById("source-message");
+const elApercuSource = document.getElementById("apercu-source");
+const elApercuVideo = document.getElementById("apercu-video");
+const elApercuIndisponible = document.getElementById("apercu-indisponible");
+const elApercuLecture = document.getElementById("apercu-lecture");
+const elApercuStop = document.getElementById("apercu-stop");
+const elApercuTimeline = document.getElementById("apercu-timeline");
+const elApercuTemps = document.getElementById("apercu-temps");
+const elRailTitle = document.getElementById("rail-title");
+const elEclipseType = document.getElementById("eclipse-type");
+const elTypeRow = document.getElementById("eclipse-type-row");
 
 // Les trois etapes, dans l'ordre du bandeau, et le bouton de chacune.
 const NOMS_ETAPES = ["vignettes", "analyse", "rendu"];
@@ -1693,6 +2322,29 @@ let genreEnCours = null;
 // Le chemin de la source courante, ou null quand le viewer est ouvert sur
 // rien. Lu par afficheSource et par demarre.
 let sourceCourante = null;
+
+// The preset object sent by /api/frames ({effectif, cache, suggere}), or
+// null on the no-source shape. Read by updateTitle for the rail title's
+// suffix, and by chargeFrames to preselect #eclipse-type.
+let currentPreset = null;
+
+// The rail title names the effective eclipse type: "Eclipse Cleaner -
+// Moon". Dynamic (no data-t on the h1, see its comment): the suffix
+// depends on state, so it is repainted here instead of by appliqueLangue's
+// [data-t] loop.
+function updateTitle() {
+  const base = t("titre_page");
+  const type = currentPreset && currentPreset.effectif;
+  // Composed key, held in a variable rather than concatenated straight
+  // into the call to t(): the latter would read, to _cles_employees
+  // (tests/test_langues.py), as a literal call on the "type_" prefix
+  // alone, demanding a table entry that will never exist -- same trap
+  // documented at libelleEtape / afficheTache's own prefix concatenations.
+  const cle = type ? "type_" + type : null;
+  const titre = cle ? base + " — " + t(cle) : base;
+  elRailTitle.textContent = titre;
+  document.title = titre;
+}
 
 // Vrai des que chargeFrames a rendu une premiere reponse. Lu par
 // rafraichitTextesDynamiques : chargeLangues tourne AVANT chargeFrames dans
@@ -1794,6 +2446,37 @@ async function chargeFrames() {
   // qu'elle est.
   sourceCourante = (d.source === undefined) ? null : d.source;
   afficheSource(sourceCourante);
+  // The raw player follows sourceCourante, but only when it CHANGES:
+  // chargeFrames is also the end-of-task poll and the callback after every
+  // decision on the page, and re-timestamping the URL on every call would
+  // restart the current playback for nothing. The case this guard covers
+  // besides choisitSource (which has already pointed the player before
+  // calling chargeFrames, see below) is the very first load of a viewer
+  // launched with a source as a command-line argument: lastPreviewSource
+  // is still its initial undefined, distinct from the "no source" null,
+  // so the condition passes exactly once.
+  if (sourceCourante !== lastPreviewSource) {
+    if (sourceCourante === null) {
+      elApercuVideo.pause();
+      lastPreviewSource = null;
+    } else {
+      pointPreviewAt(sourceCourante);
+    }
+  }
+  elApercuSource.hidden = sourceCourante === null;
+  // preset is absent on the no-source shape (T9). The row only makes sense
+  // once a source exists; the selector shows the effective preset, "auto"
+  // acting as the way back to letting the server pick.
+  currentPreset = d.preset || null;
+  elTypeRow.hidden = sourceCourante === null;
+  if (currentPreset) elEclipseType.value = currentPreset.effectif;
+  // The crop window, on both source-bearing shapes of the response (see
+  // _corps_frames). Read BEFORE vaVers(0) below, which redraws the strip and
+  // with it the overlay -- placing it from a stale `crop` would draw the
+  // PREVIOUS source's window over the new source's thumbnails.
+  crop = d.cadrage || null;
+  paintCropLabel();
+  updateTitle();
   document.body.classList.toggle("pas-pret", !d.pret);
   elManquant.hidden = d.pret;
   elSansSource.hidden = sourceCourante !== null;
@@ -1805,6 +2488,14 @@ async function chargeFrames() {
   derniereManque = (!d.pret && sourceCourante !== null) ? d.manque : null;
   if (derniereManque)
     elListeManque.textContent = derniereManque.map(libelleEtape).join(", ");
+  // Zero valid measure: the video is processable but the preset doesn't
+  // match it. Retained for rafraichitTextesDynamiques (see lastDiagnostic),
+  // exactly like derniereManque just above.
+  const diag = d.pret && d.mesures_valides === 0;
+  lastDiagnostic = diag ? d.frames.length : null;
+  elNoPosition.hidden = !diag;
+  if (diag)
+    elNoPosition.textContent = t("aucune_position", {n: d.frames.length});
   // L'etat des trois etapes vient du serveur, qui l'envoie sur les TROIS
   // formes. Object.assign par-dessus les trois valeurs par defaut : une
   // reponse amputee laisse l'etape indisponible plutot qu'undefined, dont
@@ -1931,6 +2622,22 @@ let derniereTache = null;
 // rafraichitTextesDynamiques.
 let derniereManque = null;
 
+// The frame count to cite in the "no position" diagnostic (zero valid
+// measure on a ready source), or null when it doesn't apply. Same role as
+// derniereManque just above, for #no-position -- see chargeFrames and
+// rafraichitTextesDynamiques.
+let lastDiagnostic = null;
+
+// The source for which the raw player (#apercu-video) has already received
+// a src, or undefined as long as it never has. Distinct from null ("no
+// source"): a viewer launched with a source as a command-line argument
+// shows a non-null sourceCourante from the very first chargeFrames call,
+// without ever going through choisitSource -- it is this initial undefined
+// that still makes it set a src. Compared against sourceCourante on every
+// chargeFrames to avoid re-timestamping the URL (and so restarting
+// playback) on every /api/tache poll while a task runs on the SAME source.
+let lastPreviewSource = undefined;
+
 // Le dernier message signale par signaleErreur, ou null si le bandeau est
 // vide. Une CLE (ou la liste de faits que le serveur envoie), jamais du
 // texte deja traduit : voir signaleErreur, qui traduit elle-meme, et
@@ -2000,7 +2707,11 @@ function majZoneLancement() {
   // des frames, evenements qui surviennent pendant que la boite du systeme
   // est ouverte, et qui rallumeraient sinon un bouton dont un second clic
   // partirait en 409.
-  elChoisirSource.disabled = tacheEnCours || boiteOuverte;
+  // sourceOpening, same reason: a language switch while POST /api/source
+  // is in flight (the ffmpeg probe takes several seconds) also calls this
+  // function via rafraichitTextesDynamiques, and without this third flag
+  // it would re-enable the button before the probe finishes.
+  elChoisirSource.disabled = tacheEnCours || boiteOuverte || sourceOpening;
   // Depend de l'etat courant, donc AUCUN data-t-title : rappelee par
   // rafraichitTextesDynamiques via majZoneLancement elle-meme.
   elActions.title = tacheEnCours ? t("infobulle_tache_en_cours") : "";
@@ -2061,6 +2772,11 @@ function rafraichitTextesDynamiques() {
   // dans l'ancienne langue, cote a cote avec #manque-prete qui, lui, porte
   // un data-t et suit.
   if (derniereManque) elListeManque.textContent = derniereManque.map(libelleEtape).join(", ");
+  // Same reason, same machinery, for the "no position" diagnostic: composed
+  // once by chargeFrames from d.frames.length, never touched again -- see
+  // derniereManque just above.
+  if (lastDiagnostic !== null)
+    elNoPosition.textContent = t("aucune_position", {n: lastDiagnostic});
   // Le bandeau d'erreur et le message du panneau de source portent tous deux
   // des textes composes une fois (signaleErreur, messageSource) et jamais
   // repeints depuis : sans ces deux rappels, l'avertissement de tri
@@ -2068,7 +2784,22 @@ function rafraichitTextesDynamiques() {
   // langue apres une bascule, exactement comme la liste ci-dessus.
   if (derniereErreur) signaleErreur(derniereErreur);
   if (derniereMessageSource) messageSource(derniereMessageSource.recette,
-                                           derniereMessageSource.refus);
+                                           derniereMessageSource.refus,
+                                           derniereMessageSource.attente);
+  // Same mechanism as lastDiagnostic above: the raw player's playback
+  // refusal is composed once by the "error" listener and never touched
+  // again after that.
+  if (previewUnavailableShown)
+    elApercuIndisponible.textContent = t("apercu_indisponible");
+  // Same mechanism again, for the crop label: composed once by chargeFrames
+  // from `crop` and never touched afterwards, so it needs its own replay --
+  // "Cadrage : auto" would otherwise stay French next to a page switched to
+  // English.
+  paintCropLabel();
+  // The play button's label toggles Play/Pause off the video's own state
+  // (see refreshApercuPlayLabel), not a data-t: repaint it here too, or a
+  // language switch mid-playback would leave it showing the old language.
+  refreshApercuPlayLabel();
   majZoneLancement();
   if (typeof window.rafraichitTheme === "function") window.rafraichitTheme();
   if (typeof window.rafraichitLangue === "function") window.rafraichitLangue();
@@ -2369,11 +3100,19 @@ elAnnuler.addEventListener("click",
 // rejoue depuis derniereMessageSource pour repeindre ce message -- boite
 // ouverte, refus de la boite ou de la source -- dans la nouvelle langue sans
 // reinterroger le serveur.
-function messageSource(recette, refus) {
-  derniereMessageSource = recette ? { recette, refus } : null;
+//
+// `attente` (optional) sets the CSS spinner (#source-message.attente): a
+// SINGLE caller needs it today (choisitSource, while the video opens), but
+// it is cleared by DEFAULT here rather than left to each caller to do --
+// without that, a refusal message following a wait (an invalid file right
+// after opening, say) would keep the spinning ring next to a text that no
+// longer says anything is being awaited.
+function messageSource(recette, refus, attente) {
+  derniereMessageSource = recette ? { recette, refus, attente } : null;
   elSourceMessage.textContent = recette ? recette() : "";
   elSourceMessage.hidden = !recette;
   elSourceMessage.classList.toggle("refus", !!refus);
+  elSourceMessage.classList.toggle("attente", !!attente);
 }
 
 // Vrai pendant que la boite du systeme est ouverte. La requete reste EN
@@ -2382,6 +3121,15 @@ function messageSource(recette, refus) {
 // paraitrait figee. Ce drapeau evite aussi d'en demander une seconde depuis
 // le meme onglet, ce que le serveur refuserait par un 409.
 let boiteOuverte = false;
+
+// True during POST /api/source: the ffmpeg probe and the eclipse-type
+// detection (24 frames decoded) take several seconds, during which a
+// second click on "Browse..." can only be refused by the server (409, a
+// task -- here the source switch -- is already running). Same role as
+// boiteOuverte for elChoisirSource.disabled (see majZoneLancement), a
+// separate flag because the two time windows never overlap but both must
+// turn the button off.
+let sourceOpening = false;
 
 async function parcourt() {
   if (boiteOuverte) return;
@@ -2441,6 +3189,14 @@ async function parcourt() {
 }
 
 async function choisitSource(chemin) {
+  // POST /api/source probes ffmpeg then, without a cache, decodes 24
+  // frames to detect the eclipse type (see Porteur._pose): several
+  // seconds with no feedback at all, the user report that gave rise to
+  // this message and this flag. `attente` (third argument) sets the CSS
+  // spinner.
+  sourceOpening = true;
+  elChoisirSource.disabled = true;
+  messageSource(() => t("source_ouverture"), false, true);
   let r;
   try {
     r = await fetch("/api/source", {
@@ -2448,7 +3204,14 @@ async function choisitSource(chemin) {
       body: JSON.stringify({ chemin: chemin }),
     });
   } catch (e) {
+    messageSource(null, false);
     return signaleServeurInjoignable();
+  } finally {
+    sourceOpening = false;
+    // Left to majZoneLancement, which knows whether a task is running:
+    // unconditionally re-enabling it here would make it clickable during
+    // a render -- same reasoning as in parcourt().
+    majZoneLancement();
   }
   if (!r.ok) {
     // 400 : fichier absent, ou que ffmpeg ne sait pas lire — la boite filtre
@@ -2474,10 +3237,178 @@ async function choisitSource(chemin) {
   // de celle-ci : le moteur, lui, garde son instantane (constat de la
   // tache 6), la page n'a donc qu'a cesser de l'afficher.
   elResultatTache.hidden = true;
+  // The raw player: point it at the NEW source (the cache-buster ensures
+  // the browser does not serve the previous source's response from its
+  // HTTP cache -- the URL's path itself is constant across sources, see
+  // GET /video) and unfold the panel ONCE for this change. Nowhere else is
+  // .open touched: the fold state is then left to the user's choice.
+  pointPreviewAt(chemin);
+  elApercuSource.open = true;
   await chargeFrames();
 }
 
+// True once the <video> element has reported a playback error for the
+// current source. Retained like derniereManque / lastDiagnostic above:
+// rafraichitTextesDynamiques recomposes this text in the new language
+// without querying the server again or re-loading the video.
+let previewUnavailableShown = false;
+
+// Points the raw player at this source and clears any prior refusal.
+// Factored out of choisitSource: chargeFrames() also needs it, for a
+// viewer launched with a source already given as a command-line argument
+// (no POST /api/source ever goes through choisitSource in that case).
+function pointPreviewAt(source) {
+  elApercuVideo.pause();
+  previewUnavailableShown = false;
+  elApercuIndisponible.hidden = true;
+  // Timestamp on the query string, not a cache-defeating header: the
+  // path itself is constant across sources (see GET /video), and without
+  // it the browser would keep showing the PREVIOUS source from its cache
+  // until the fresh response arrives.
+  elApercuVideo.src = "/video?ts=" + Date.now();
+  lastPreviewSource = source;
+  // Reset the custom bar for the incoming source: its own loadedmetadata
+  // (below) refreshes the timeline's max and re-enables it once the new
+  // video reports a real duration; until then the slider stays at rest
+  // and disabled rather than showing the previous source's range. Play
+  // and stop are re-enabled here too: a source switch must clear whatever
+  // disabled state the PREVIOUS source's "error" listener left behind.
+  elApercuTimeline.value = 0;
+  elApercuTimeline.max = 0;
+  elApercuTimeline.disabled = true;
+  elApercuLecture.disabled = false;
+  elApercuStop.disabled = false;
+  refreshApercuPlayLabel();
+  elApercuTemps.textContent = "0:00 / 0:00";
+}
+
+elApercuVideo.addEventListener("error", () => {
+  previewUnavailableShown = true;
+  elApercuIndisponible.textContent = t("apercu_indisponible");
+  elApercuIndisponible.hidden = false;
+  // A video that failed to load has nothing for these to act on: without
+  // this, Play would sit there clickable above the "can't play" message,
+  // calling .play() on a source that will only ever error again.
+  elApercuLecture.disabled = true;
+  elApercuStop.disabled = true;
+  elApercuTimeline.disabled = true;
+});
+
+// Custom playback bar (replaces the native <video controls> chrome removed
+// from #apercu-video): play/pause toggle, stop, and a manual timeline --
+// exactly the three controls the feature asked for.
+
+// The play button's own label, chosen from the video's ACTUAL state
+// (elApercuVideo.paused), not from whichever action the user last clicked.
+// Called from rafraichitTextesDynamiques (language switch), from
+// pointPreviewAt (new source), and from the play/pause events below.
+function refreshApercuPlayLabel() {
+  elApercuLecture.textContent = elApercuVideo.paused ? t("apercu_lecture") : t("apercu_pause");
+}
+
+// Tiny local formatter: M:SS, zero-padded seconds, minutes unpadded.
+function formatApercuTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return m + ":" + String(s).padStart(2, "0");
+}
+
+function refreshApercuTime() {
+  elApercuTemps.textContent = formatApercuTime(elApercuVideo.currentTime) + " / " +
+                               formatApercuTime(elApercuVideo.duration);
+}
+
+elApercuLecture.addEventListener("click", () => {
+  // play() can reject if the source errored between events (the "error"
+  // listener disabling this button makes that unreachable in practice,
+  // but the catch keeps the console clean if a race slips through).
+  if (elApercuVideo.paused) elApercuVideo.play().catch(() => {});
+  else elApercuVideo.pause();
+});
+
+// The label follows the video's OWN play/pause events, never the click
+// handler above directly: playback can pause for reasons other than this
+// button (the panel closing, a source switch calling .pause() in
+// pointPreviewAt), and a label driven only by the click would then lie.
+elApercuVideo.addEventListener("play", refreshApercuPlayLabel);
+elApercuVideo.addEventListener("pause", refreshApercuPlayLabel);
+
+elApercuStop.addEventListener("click", () => {
+  elApercuVideo.pause();
+  elApercuVideo.currentTime = 0;
+  // The slider and time display follow via the "pause"/"timeupdate"
+  // events fired by the two lines above -- no direct DOM writes needed.
+});
+
+elApercuVideo.addEventListener("loadedmetadata", () => {
+  // A playable source just reported metadata: re-enable play/stop in case
+  // the "error" listener above had disabled them for a PRIOR attempt on
+  // this same source (a source can fire "error" then later recover, e.g.
+  // a transient read failure retried by the browser).
+  elApercuLecture.disabled = false;
+  elApercuStop.disabled = false;
+  // A source ffmpeg can decode but whose duration is unknown (e.g. some
+  // live/streamed containers) reports Infinity or NaN here: leave the
+  // timeline at rest rather than a slider with an unusable range.
+  if (Number.isFinite(elApercuVideo.duration)) {
+    elApercuTimeline.max = elApercuVideo.duration;
+    elApercuTimeline.disabled = false;
+  } else {
+    elApercuTimeline.max = 0;
+    elApercuTimeline.disabled = true;
+  }
+  refreshApercuTime();
+});
+
+elApercuVideo.addEventListener("timeupdate", () => {
+  // Suppressed while the user is dragging: otherwise playback's own
+  // position would fight the drag and snap the thumb back mid-gesture.
+  if (previewDragging) return;
+  elApercuTimeline.value = elApercuVideo.currentTime;
+  refreshApercuTime();
+});
+
+// True while the user is dragging the timeline thumb. Set on "input" (the
+// live drag) and cleared on "change" (drag release) -- the scheme chosen
+// among the coherent options: scrub live so the video visibly seeks as the
+// thumb moves, with this flag suppressing the timeupdate echo above so the
+// thumb doesn't get pulled back to the pre-drag position mid-gesture.
+let previewDragging = false;
+
+elApercuTimeline.addEventListener("input", () => {
+  previewDragging = true;
+  elApercuVideo.currentTime = elApercuTimeline.value;
+  refreshApercuTime();
+});
+
+elApercuTimeline.addEventListener("change", () => {
+  elApercuVideo.currentTime = elApercuTimeline.value;
+  previewDragging = false;
+});
+
 elChoisirSource.addEventListener("click", () => parcourt());
+
+// Switching preset can invalidate the cached analysis for one that no
+// longer matches: chargeFrames() re-reads the fresh step states from the
+// server rather than guessing them here. Reload UNCONDITIONALLY, not only
+// on r.ok: a refusal (409 a task is running, 400) would otherwise leave
+// the <select> showing the value the operator just picked while the
+// server kept the old preset -- a silent desync until some unrelated
+// chargeFrames() call happened to fix it. Reloading on every outcome
+// either paints the new state or snaps the selector back to the server's
+// truth; no extra message needed, the snap-back IS the feedback.
+elEclipseType.addEventListener("change", async () => {
+  try {
+    await fetch("/api/preset", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({preset: elEclipseType.value}),
+    });
+  } catch {
+    return signaleServeurInjoignable();
+  }
+  await chargeFrames();
+});
 
 // Rattachement : au chargement de la page, AVANT tout le reste, savoir si
 // une tache tourne deja. L'etat vit entierement cote serveur : il suffit de

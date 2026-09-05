@@ -116,6 +116,50 @@ def _divergences(anciens, courants):
         if anciens.get(n) != courants.get(n)))
 
 
+def _lu(sortie_rendu):
+    """Le descripteur relu, ou None des qu'il ne dit rien d'exploitable.
+
+    LA SEULE LECTURE DU MODULE, partagee par compare() et recorded_source().
+    Elle etait inline dans compare() ; l'en sortir evite qu'un second
+    lecteur reecrive -- et desaccorde -- la liste des defaillances qui
+    valent « rien a dire ».
+
+    None couvre exactement ce que l'invariant du module traite en bloc :
+    fichier absent, illisible, encodage invalide, JSON corrompu, forme qui
+    n'est pas un objet, schema inconnu. Aucun appelant n'a a distinguer ces
+    cas, et compare() les rendait deja tous par le meme (True, ()).
+    """
+    try:
+        with open(chemin_descripteur(sortie_rendu), encoding="utf-8") as f:
+            lu = json.load(f)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(lu, dict) or lu.get("schema") != NOM_SCHEMA:
+        return None
+    return lu
+
+
+def recorded_source(sortie_rendu):
+    """The source signature this render was produced from, or None.
+
+    A PROVENANCE question, and the only reason this accessor is public:
+    "which video does this mp4 come from?". The descriptor records the
+    signature of the ANALYSIS the render applied, source signature included
+    (see viewer._signature_analyse), so the answer is on disk next to the
+    render rather than guessed from its name.
+
+    None whenever the descriptor cannot answer -- absent, unreadable,
+    unknown schema, or a shape that carries no cache signature. A caller
+    must read None as "unknown provenance", never as "no source": the whole
+    point is that an unvouched render is left alone.
+    """
+    lu = _lu(sortie_rendu)
+    cache = None if lu is None else lu.get("cache")
+    if not isinstance(cache, dict):
+        return None
+    return cache.get("source")
+
+
 def compare(sortie_rendu, ecarts, signature_cache, reglages):
     """Rend (perime, divergences) en UNE seule lecture du descripteur.
 
@@ -132,12 +176,8 @@ def compare(sortie_rendu, ecarts, signature_cache, reglages):
     signature_cache et reglages : memes structures JSON natives qu'attend
     ecrit(), pour la meme raison (voir sa docstring).
     """
-    try:
-        with open(chemin_descripteur(sortie_rendu), encoding="utf-8") as f:
-            lu = json.load(f)
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return True, ()
-    if not isinstance(lu, dict) or lu.get("schema") != NOM_SCHEMA:
+    lu = _lu(sortie_rendu)
+    if lu is None:
         return True, ()
     perime_ = lu != _contenu(ecarts, signature_cache, reglages)
     anciens = _ecarts_relus(lu.get("decisions"))

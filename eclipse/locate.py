@@ -21,9 +21,56 @@ def sobel(gray):
     return gx, gy
 
 
-def lit_mask(gray):
-    """Region eclairee : seuil a mi-chemin entre le fond et le p99."""
+#: "max" lit-mask mode: a pixel is lit above this fraction of the frame
+#: maximum. Exists because the percentile mode fails BOTH ways off the
+#: reference sequence (measured, spec 2026-08-31): on a small moon (1.7 %
+#: of the pixels) the p99 falls in the sky; on a large half-shadowed moon
+#: the halfway threshold cuts the umbral part (area radius 73-132 px for a
+#: constant 195 px disc). 0.08 sits under the umbral level of the measured
+#: videos (10-25 % of max) and above sensor noise on a black sky.
+#:
+#: CALIBRATION VERDICT (task 11, 2026-09-01): the mask is a real
+#: improvement on the percentile one, and it is still not enough. Swept
+#: against an independently measured true radius, the AREA method under
+#: this mask never comes close on an eclipsed disc:
+#:
+#:     fraction        0.02    0.04    0.08    0.10    0.15    0.20
+#:     Lunar-213307   -5.6 %  -7.7 % -10.8 % -12.8 % -17.1 % -21.8 %
+#:     Moon-Eclipse  -37.0 % -38.0 % -40.2 % -41.0 % -43.8 % -46.6 %
+#:
+#: (percentile mode, for scale: -39.7 % and -32.3 %). No fraction rescues
+#: it, because the error is not a threshold error: the lit AREA shrinks as
+#: the umbra advances while the disc does not, so the estimate drifts
+#: within a single video -- 178 px down to 110 across Lunar-213307, for a
+#: disc that stays at 196. The vote scan lands at -0.3 % and -1.5 % on the
+#: same two videos, which is why every profile setting lit_mode "max" also
+#: sets radius_mode "scan" (see presets), and why no shipped profile
+#: currently reaches this constant at all. 0.08 is left as measured: it is
+#: the fallback for an explicit area+max combination, and the sweep gives
+#: no ground to prefer another value on a path nothing takes.
+LIT_MAX_FRACTION = 0.08
+
+
+def lit_mask(gray, mode="percentile"):
+    """Region eclairee : seuil a mi-chemin entre le fond et le p99.
+
+    mode "max": threshold relative to the frame maximum instead, for
+    profiles whose subject may be small or partly shadowed (see
+    LIT_MAX_FRACTION). The default stays byte-identical to the historic
+    behaviour.
+
+    An unknown mode is refused rather than quietly served by the
+    percentile path: a typo would otherwise measure a whole sequence under
+    the wrong mask without a word.
+    """
+    if mode not in ("percentile", "max"):
+        raise ValueError(f"Mode d'eclairement inconnu : {mode!r}")
     g = gray.astype(np.float32)
+    if mode == "max":
+        pic = float(g.max())
+        if pic < 1e-6:
+            return np.zeros(g.shape, dtype=bool)
+        return g >= LIT_MAX_FRACTION * pic
     haut = float(np.percentile(g, 99.0))
     bas = float(np.percentile(g, 5.0))
     if haut - bas < 1e-6:
@@ -31,7 +78,7 @@ def lit_mask(gray):
     return g >= (bas + haut) * 0.5
 
 
-def estimate_radius(grays, n_candidats=50):
+def estimate_radius(grays, n_candidats=50, lit_mode="percentile"):
     """Rayon apparent du Soleil, estime sur les frames les plus pleines.
 
     Pour un disque plein, l'aire donne le rayon exactement. On retient les
@@ -42,8 +89,11 @@ def estimate_radius(grays, n_candidats=50):
     grays est consomme paresseusement : seules les aires sont retenues,
     jamais les images. Une sequence de 2556 frames en 540x960 pesant 4 Go,
     l'appelant doit passer un generateur, pas une liste.
+
+    lit_mode is forwarded to lit_mask, see its "max" mode.
     """
-    aires = np.array([float(lit_mask(g).sum()) for g in grays], dtype=np.float64)
+    aires = np.array([float(lit_mask(g, mode=lit_mode).sum()) for g in grays],
+                     dtype=np.float64)
     if not np.any(aires > 0):
         raise ValueError(
             "Aucune frame eclairee : impossible d'estimer le rayon. "
@@ -54,7 +104,64 @@ def estimate_radius(grays, n_candidats=50):
     return float(np.median(np.sqrt(aires[meilleurs] / np.pi)))
 
 
-def locate_center(gray, r):
+#: Radius scan bounds and steps. Geometric coarse sweep (12 % steps), one
+#: linear refinement, then a 1 px refinement: 25-35 votes per frame. The
+#: scan runs on a handful of sample frames once per analysis, never per
+#: frame. Validated on the two user Seestar videos before being coded:
+#: best-confidence radius 194-196 px on all 8 probed frames while the lit
+#: area said 73-132 (spec 2026-08-31).
+SCAN_COARSE_STEP = 1.12
+SCAN_RMAX_FRACTION = 0.6
+
+
+def scan_radius(grays, vote="bright", r_min=8.0, r_max=None):
+    """Radius maximizing the directed-vote peak confidence.
+
+    grays: a LIST of grayscale frames, already sampled by the caller.
+    Per frame: coarse geometric sweep, then two refinements around the
+    best candidate. Frames whose best confidence is under half the best
+    of the batch are dropped (empty sky, clouds); the median of the
+    survivors is returned. Raises ValueError when nothing is usable —
+    the caller should suggest an explicit --radius.
+    """
+    grays = list(grays)
+    if not grays:
+        raise ValueError("Aucune frame pour balayer le rayon")
+    h, w = grays[0].shape
+    if r_max is None:
+        r_max = SCAN_RMAX_FRACTION * min(h, w)
+
+    candidates = []
+    r = float(r_min)
+    while r <= r_max:
+        candidates.append(r)
+        r *= SCAN_COARSE_STEP
+
+    best_per_frame = []            # (confidence, radius) per usable frame
+    for g in grays:
+        scored = [(locate_center(g, rc, vote=vote)[2], rc)
+                  for rc in candidates]
+        conf, rc = max(scored)
+        if conf <= 0.0:
+            continue
+        # Linear refinement inside the geometric step, then at 1 px.
+        for step in (max(1.0, 0.04 * rc), 1.0):
+            low, high = rc - 3.0 * step, rc + 3.0 * step
+            fine = np.arange(max(r_min, low), high + step / 2, step)
+            conf, rc = max((locate_center(g, float(rf), vote=vote)[2],
+                            float(rf)) for rf in fine)
+        best_per_frame.append((conf, rc))
+
+    if not best_per_frame:
+        raise ValueError(
+            "Aucune frame ne donne de pic de vote exploitable : "
+            "impossible de balayer le rayon. Fournir --radius.")
+    ceiling = max(c for c, _ in best_per_frame)
+    radii = [rc for c, rc in best_per_frame if c >= 0.5 * ceiling]
+    return float(np.median(radii))
+
+
+def _vote_center(gray, r, sign):
     """Centre du disque solaire par vote dirige.
 
     En chaque point de contour, la normale n du gradient pointe vers les
@@ -88,8 +195,8 @@ def locate_center(gray, r):
 
     nx = gx[ys, xs] / poids
     ny = gy[ys, xs] / poids
-    vx = xs + r * nx
-    vy = ys + r * ny
+    vx = xs + sign * r * nx
+    vy = ys + sign * r * ny
 
     # L'accumulateur deborde du cadre : le centre peut tomber dehors quand
     # l'horizon tranche le disque.
@@ -144,6 +251,82 @@ def locate_center(gray, r):
         return float("nan"), float("nan"), 0.0
     cx, cy, somme = raffine
     return cx, cy, min(float(somme / max(wv.sum(), 1e-9)), 1.0)
+
+
+def locate_center(gray, r, vote="bright", r_dark=None):
+    """Disc center by directed vote; see _vote_center for the method.
+
+    vote "dark" flips the normals (p - r*n): on a dark disc ringed by
+    light — a solar totality — the gradient at the limb points OUTWARD,
+    and the bright vote scatters its votes 2r away from the center. vote
+    "dual" evaluates both regimes and returns the sharper peak: the
+    crescent -> totality -> crescent transition happens inside a single
+    video, each frame must pick for itself.
+
+    r_dark: the radius the DARK regime votes at, see locate_center_regime.
+    """
+    return locate_center_regime(gray, r, vote, r_dark)[0]
+
+
+def locate_center_regime(gray, r, vote="dual", r_dark=None):
+    """((cx, cy, conf), regime) — the winning regime alongside the fix.
+
+    mesure_frame stores the regime in the cache: quality measures read a
+    BRIGHT disc inside the radius but a DARK disc's light lives in the
+    ring outside it (see quality.measure_quality's regime parameter).
+
+    r_dark is the radius the DARK vote uses; None means "the same r",
+    which keeps every historic call byte-identical.
+
+    A DUAL sequence has TWO radii and needs both, because the two regimes
+    do not measure the same circle: the bright vote fits the SOLAR limb,
+    the dark vote fits the LUNAR disc that covers it, and the moon is the
+    larger of the two. Measured on m2-res_852p (a total solar eclipse):
+    solar limb 87-88 analysis px against 93.8 +/- 0.3 for the dark disc,
+    7.3 % apart. Voting the dark regime at the bright radius is not merely
+    imprecise, it is DEGENERATE: a limb point at c + r_true*u votes at
+    c + (r_true - r)*u, so every vote lands on a CIRCLE of radius
+    |r_true - r| = 6.9 px around the true centre instead of on a peak.
+    The accumulator then carried four near-equal maxima (weakest/strongest
+    up to 0.99) and the argmax alternated between x = 113.9 and x = 125.1
+    for a true centre of 119.9 -- 58 horizontal jumps of 24 source px over
+    the totality, at 1.95 jumps per second. Scanned at 93.93 the jumps fall
+    to 2 (both real, at third contact), the peak confidence rises 4.5x
+    (0.095 -> 0.423) and the measured centre lands on ground truth.
+    """
+    if vote == "bright":
+        return _vote_center(gray, r, +1.0), "bright"
+    r_dark = r if r_dark is None else r_dark
+    if vote == "dark":
+        return _vote_center(gray, r_dark, -1.0), "dark"
+    if vote != "dual":
+        raise ValueError(f"Regime de vote inconnu : {vote!r}")
+    bright, dark = locate_both_regimes(gray, r, r_dark)
+    return (bright, "bright") if bright[2] >= dark[2] else (dark, "dark")
+
+
+def locate_both_regimes(gray, r, r_dark=None):
+    """((cx, cy, conf) bright, (cx, cy, conf) dark) -- both candidates, no
+    winner picked.
+
+    Extracted from locate_center_regime's dual branch, which still picks
+    the per-frame argmax for every caller that wants a single answer. This
+    is for the one caller that must NOT: pipeline.analyze's dual-vote
+    collection, which found the per-frame argmax flapping between two
+    DIFFERENT, legitimately-locked bodies during a partial eclipse -- the
+    bright vote on the solar crescent, the dark vote on the covering lunar
+    disc, physically offset centres, not a measurement error on either
+    side (see this module's own docstring for the measured degeneracy that
+    makes the dark vote need its own radius in the first place). Choosing
+    between them is instead done with hysteresis over the ORDERED sequence
+    of confidences (see pipeline.RegimeChooser), which no single frame can
+    do for itself -- hence returning both instead of a winner here.
+
+    r_dark: the radius the dark regime votes at; None repeats r, matching
+    locate_center_regime.
+    """
+    r_dark = r if r_dark is None else r_dark
+    return _vote_center(gray, r, +1.0), _vote_center(gray, r_dark, -1.0)
 
 
 def _barycentre(acc, py, px, pad):

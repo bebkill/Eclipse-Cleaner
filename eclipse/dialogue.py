@@ -44,15 +44,36 @@ EXTENSIONS_VIDEO = (".mp4", ".mov", ".avi", ".mkv", ".m4v")
 #: MAIN thread, and this module runs in an HTTP handler thread — there,
 #: tkinter.Tk() does not raise a TclError the except clauses could turn into
 #: a status: it ABORTS the whole process (NSInternalInconsistencyException,
-#: issue #4). So the dialog is refused before tkinter is even imported. Like
-#: MESSAGE_INDISPONIBLE, this text only states the WHY; the page adds the
-#: way out (restart with the source on the command line) in its own
-#: language. A native macOS dialog (osascript) is the planned replacement —
-#: see issue #1.
+#: issue #4). _choisit_video_macos works around this by running the panel
+#: in osascript's OWN process instead of in this one — the diagnosis and
+#: the route are Mireia Nievas's (issue #1). This message now covers only
+#: what that route cannot: osascript missing from the system entirely, with
+#: no other way in yet. Like MESSAGE_INDISPONIBLE, this text only states the
+#: WHY; the page adds the way out (restart with the source on the command
+#: line) in its own language.
 MESSAGE_MACOS = (
-    "The system file dialog is not available on macOS: it would have to "
-    "open from a background thread, which macOS refuses to the point of "
-    "killing the program.")
+    "The system file dialog is not available on macOS: osascript, which "
+    "this module relies on to avoid the AppKit main-thread restriction, "
+    "was not found on this system.")
+
+#: How long osascript may run before this gives up and raises Indisponible
+#: instead of blocking the HTTP handler thread forever. Generous on
+#: purpose: a person can legitimately take a while browsing a file dialog.
+#: What this guards against is a STALLED osascript that never shows a
+#: visible dialog at all -- a TCC/Automation permission prompt hidden
+#: behind another window, or Apple events denied outright -- which would
+#: otherwise hang the request with no way out.
+DELAI_OSASCRIPT_S = 300
+
+#: Raised when osascript IS present but the panel fails to open for a
+#: reason other than the user closing it (permissions, a sandboxed
+#: environment, a malformed script, ...). {detail} carries osascript's own
+#: stderr, or the OS error that kept it from even starting: free diagnostic
+#: text, like MESSAGE_INDISPONIBLE's parenthetical -- not localized, since
+#: the page composes the surrounding sentence itself (key
+#: "boite_indisponible").
+MESSAGE_MACOS_OSASCRIPT_ECHEC = (
+    "osascript failed to open the macOS file dialog: {detail}")
 
 #: Ce qu'on peut dire a l'utilisateur quand la boite ne s'ouvre pas. Sans
 #: explorateur web, il ne reste AUCUN moyen de choisir une source depuis la
@@ -88,6 +109,108 @@ def _types_de_fichiers(libelles=None):
             (libelles["boite_filtre_tous"], "*")]
 
 
+def _applescript_echappe(texte):
+    """Escapes a string for embedding inside an AppleScript double-quoted
+    literal ("...").
+
+    Backslash MUST be escaped BEFORE the quote, not after: escaping the
+    quote first and only then doubling every backslash would double the
+    backslash that escaping just inserted in front of the quote, undoing
+    it and leaving the quote UNESCAPED in the generated script. That is an
+    injection, not a cosmetic bug -- a folder name or a title containing a
+    double quote could break out of the string literal and run arbitrary
+    AppleScript, e.g. via `do shell script`. Escaping backslash first and
+    the quote second is the only order that is safe.
+    """
+    return texte.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _choisit_video_macos(titre, dossier_initial):
+    """Opens the native macOS panel through osascript ("choose file").
+
+    osascript runs the panel in ITS OWN process, spawned fresh for this
+    call and gone once it returns: the HTTP handler thread that called
+    choisit_video never touches AppKit itself, which is exactly what
+    dodges the main-thread abort described above. This is Mireia Nievas's
+    diagnosis and route (issue #1); this function keeps her approach
+    recognizable, with two fixes on top: user-cancel and osascript-failure
+    no longer collapse into the same return value, and the type filter is
+    built from EXTENSIONS_VIDEO instead of a second, hand-kept list.
+
+    titre : the dialog's prompt, already resolved to the caller's language
+    (libelles["boite_titre"]) -- this function does not touch langues
+    itself, matching the module's "one string only" rule at the top.
+    dossier_initial : where osascript should start browsing; ignored if it
+    is not an existing directory, since a bad POSIX file clause is itself
+    an osascript failure.
+
+    Renders the chosen path, or None at a user cancel -- AppleScript's
+    "choose file" reports that as an error whose text contains "User
+    canceled" or the OSStatus "(-128)", which is how it is told apart here
+    from a genuine failure. The parentheses in "(-128)" are matched on
+    purpose and not just the bare digits: an unrelated OSStatus that
+    happens to contain the substring "-128" (e.g. -1280) must not be
+    misread as a cancel.
+
+    Raises Indisponible if osascript starts but exits non-zero for any
+    OTHER reason, if it cannot be started at all (missing binary despite
+    the shutil.which check below, no permission, ...), or if it runs
+    past DELAI_OSASCRIPT_S without answering (a stalled permission prompt
+    hidden behind another window, Apple events denied outright, ...):
+    those are all infrastructure failures, not a choice the user made, and
+    the HTTP caller (viewer._parcourir) depends on that distinction to
+    turn only the latter into a 503.
+    """
+    import os
+    import subprocess
+
+    morceaux = ["choose file"]
+    if titre:
+        morceaux.append('with prompt "%s"' % _applescript_echappe(titre))
+    if dossier_initial and os.path.isdir(dossier_initial):
+        # Les separateurs sont normalises AVANT l'echappement AppleScript :
+        # un chemin qui porte des antislashs de SEPARATEUR (colle depuis
+        # Windows, environnement de test) n'en a plus une fois convertis en
+        # "/", et il ne reste alors que l'echappement normal a appliquer --
+        # celui qui protege un antislash ou un guillemet appartenant
+        # reellement au nom du dossier.
+        chemin_pose = _applescript_echappe(dossier_initial.replace("\\", "/"))
+        morceaux.append('default location POSIX file "%s"' % chemin_pose)
+    # Les UTI d'abord : ce sont elles qui font vraiment filtrer le panneau
+    # natif par NATURE de fichier. Les extensions restent a cote, une video
+    # que ffmpeg lit pouvant ne relever d'aucune des deux UTI.
+    types = ['"public.movie"', '"public.video"']
+    types += ['"%s"' % e.lstrip(".") for e in EXTENSIONS_VIDEO]
+    morceaux.append("of type {%s}" % ", ".join(types))
+    script = "POSIX path of (%s)" % " ".join(morceaux)
+
+    try:
+        resultat = subprocess.run(["osascript", "-e", script],
+                                  capture_output=True, text=True,
+                                  timeout=DELAI_OSASCRIPT_S)
+    except subprocess.TimeoutExpired as exc:
+        raise Indisponible(MESSAGE_MACOS_OSASCRIPT_ECHEC.format(
+            detail="osascript did not answer within %d s" %
+                  DELAI_OSASCRIPT_S)) from exc
+    except OSError as exc:
+        # shutil.which l'avait trouve, mais le lancer a quand meme echoue
+        # (retire entre-temps, permissions, ...).
+        raise Indisponible(
+            MESSAGE_MACOS_OSASCRIPT_ECHEC.format(detail=str(exc))) from exc
+
+    if resultat.returncode != 0:
+        erreur = (resultat.stderr or "").strip()
+        if "User canceled" in erreur or "(-128)" in erreur:
+            # La formule d'AppleScript pour « l'utilisateur a ferme le
+            # panneau » -- ce n'est pas un echec, voir la docstring.
+            return None
+        raise Indisponible(MESSAGE_MACOS_OSASCRIPT_ECHEC.format(
+            detail=erreur or ("osascript exited with code %d" %
+                              resultat.returncode)))
+
+    return resultat.stdout.strip() or None
+
+
 def choisit_video(dossier_initial=None, langue="fr"):
     """Ouvre la boite native et rend le chemin choisi, ou None a l'annulation.
 
@@ -99,21 +222,29 @@ def choisit_video(dossier_initial=None, langue="fr"):
     parce qu'un choix d'interface ne doit pas empecher de designer un
     fichier.
 
-    Leve Indisponible si tkinter ne demarre pas ou si la boite ne peut pas
-    s'afficher. Ne leve jamais autre chose de previsible : l'appelant est un
-    gestionnaire HTTP, et une TclError nue lui donnerait une trace au lieu
-    d'un statut.
+    Leve Indisponible si tkinter/osascript ne demarre pas ou si la boite ne
+    peut pas s'afficher. Ne leve jamais autre chose de previsible :
+    l'appelant est un gestionnaire HTTP, et une TclError nue lui donnerait
+    une trace au lieu d'un statut.
 
-    On macOS the refusal is unconditional and comes FIRST: there, a Tk
-    created outside the main thread does not fail, it kills the process
-    (see MESSAGE_MACOS).
+    On macOS, osascript runs the panel from its own process (see
+    _choisit_video_macos) and is tried FIRST: a Tk created outside the main
+    thread does not fail there, it kills the process (issue #4). Only when
+    osascript itself cannot be found does this fall back to the refusal in
+    MESSAGE_MACOS -- there is no third way in yet.
     """
-    if sys.platform == "darwin":
-        raise Indisponible(MESSAGE_MACOS)
     try:
         libelles = langues.charge(langue)
     except FileNotFoundError:
         libelles = langues.charge("fr")
+
+    if sys.platform == "darwin":
+        import shutil
+        if shutil.which("osascript") is None:
+            raise Indisponible(MESSAGE_MACOS)
+        return _choisit_video_macos(libelles.get("boite_titre"),
+                                    dossier_initial)
+
     try:
         import tkinter
         from tkinter import filedialog

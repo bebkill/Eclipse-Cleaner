@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
-from eclipse.locate import sobel, lit_mask, estimate_radius, locate_center
-from tests.synth import make_frame
+from eclipse.locate import (
+    sobel, lit_mask, estimate_radius, locate_center, locate_center_regime,
+    locate_both_regimes, scan_radius,
+)
+from tests.synth import make_frame, make_moon_frame, make_totality_frame
 
 
 def gris(img):
@@ -233,6 +236,43 @@ def test_un_petit_rayon_desactive_le_mecanisme():
     assert _concurrent_vertical(acc, 100, 100, 200.0) == (130, 100)
 
 
+def test_lit_mask_max_mode_sees_the_umbral_part():
+    """Percentile mode only sees the lit sliver of a half-shadowed moon;
+    max mode must cover the whole disc (measured failure: area-radius 73
+    to 132 px for a constant 195 px disc on the user's videos).
+    umbra_level 0.25: the umbral gray sits at ~14 % of the frame max
+    (umbra_wb dims the gray), comfortably above LIT_MAX_FRACTION."""
+    img = make_moon_frame(w=200, h=200, center=(100.0, 100.0), r=50.0,
+                          umbra=0.5, umbra_level=0.25)
+    g = gris(img)
+    aire_max = int(lit_mask(g, mode="max").sum())
+    attendu = np.pi * 50.0 ** 2
+    assert abs(aire_max - attendu) / attendu < 0.12
+
+
+def test_lit_mask_max_mode_on_a_black_frame_is_empty():
+    assert not lit_mask(np.zeros((60, 60), np.float32), mode="max").any()
+
+
+def test_lit_mask_refuses_an_unknown_mode():
+    with pytest.raises(ValueError, match="inconnu"):
+        lit_mask(np.zeros((10, 10), np.float32), mode="mediane")
+
+
+def test_lit_mask_default_mode_is_unchanged():
+    img = make_frame(w=200, h=200, center=(100.0, 100.0), r=40.0)
+    assert (lit_mask(gris(img)) == lit_mask(gris(img), mode="percentile")).all()
+
+
+def test_estimate_radius_max_mode_on_small_dim_moons():
+    """A small moon (1.7 % of the pixels, like Moon-Eclipse.mp4): the p99
+    falls in the sky and percentile mode underestimates; max mode holds."""
+    grays = [gris(make_moon_frame(w=360, h=640, center=(180.0, 320.0),
+                                  r=35.0, umbra=0.3, umbra_level=0.25))
+             for _ in range(10)]
+    assert abs(estimate_radius(grays, n_candidats=5, lit_mode="max") - 35.0) < 2.0
+
+
 def test_l_alignement_ne_deplace_pas_la_mesure_horizontale():
     """L'alignement ne reprend que le Y du pic concurrent.
 
@@ -257,3 +297,159 @@ def test_l_alignement_ne_deplace_pas_la_mesure_horizontale():
     assert abs(cx_haut - cx_bas) < 2.5, (
         f"la bascule deplace cx de {abs(cx_haut - cx_bas):.2f} px : le x du "
         f"concurrent est-il repris ?")
+
+
+def test_dark_vote_locks_a_totality_disc():
+    img = make_totality_frame(w=240, h=240, center=(120.0, 118.0), r=55.0,
+                              corona=0.5)
+    g = gris(img)
+    cx, cy, conf = locate_center(g, 55.0, vote="dark")
+    assert abs(cx - 120.0) < 1.5 and abs(cy - 118.0) < 1.5
+    assert conf > 0.05
+
+
+def test_bright_vote_does_not_lock_a_totality_disc():
+    """The regression the dual regime exists for: on a dark disc the
+    bright-vote normals point away from the center."""
+    img = make_totality_frame(w=240, h=240, center=(120.0, 118.0), r=55.0,
+                              corona=0.5)
+    cx, cy, conf = locate_center(gris(img), 55.0)     # default bright
+    _, _, conf_dark = locate_center(gris(img), 55.0, vote="dark")
+    assert conf_dark > 2.0 * conf
+
+
+def test_dual_vote_picks_the_right_regime_on_both_sides():
+    tot = gris(make_totality_frame(w=240, h=240, center=(120.0, 120.0),
+                                   r=55.0, corona=0.5))
+    croissant = gris(make_frame(w=240, h=240, center=(120.0, 120.0),
+                                r=55.0, phase=0.9))
+    (cx, cy, _), regime = locate_center_regime(tot, 55.0)
+    assert regime == "dark" and abs(cx - 120.0) < 1.5
+    (cx, cy, _), regime = locate_center_regime(croissant, 55.0)
+    assert regime == "bright" and abs(cx - 120.0) < 1.5
+
+
+def test_dual_vote_equals_the_winning_single_regime():
+    tot = gris(make_totality_frame(w=240, h=240, center=(120.0, 120.0),
+                                   r=55.0, corona=0.5))
+    assert locate_center(tot, 55.0, vote="dual") == \
+        locate_center(tot, 55.0, vote="dark")
+
+
+def test_scan_radius_recovers_a_half_shadowed_moon():
+    """The decisive measurement of the spec, in synthetic form: the lit
+    AREA lies (radius 73-132 px for a 195 px disc on the user's videos),
+    the vote-peak scan does not."""
+    grays = [gris(make_moon_frame(w=270, h=480, center=(135.0, 240.0),
+                                  r=97.0, umbra=u, umbra_level=0.25))
+             for u in (0.2, 0.5, 0.7)]
+    assert abs(scan_radius(grays) - 97.0) < 2.0
+
+
+def test_scan_radius_recovers_a_crescent_sun_in_a_halo():
+    grays = [gris(make_frame(w=270, h=480, center=(135.0, 240.0), r=65.0,
+                             phase=0.9, halo=0.4))
+             for _ in range(3)]
+    assert abs(scan_radius(grays, vote="dual") - 65.0) < 2.0
+
+
+def test_scan_radius_ignores_empty_frames():
+    vide = np.zeros((480, 270), np.float32)
+    grays = [vide, gris(make_moon_frame(w=270, h=480,
+                                        center=(135.0, 240.0), r=80.0,
+                                        umbra=0.4, umbra_level=0.25)), vide]
+    assert abs(scan_radius(grays) - 80.0) < 2.0
+
+
+def test_scan_radius_with_nothing_usable_raises():
+    with pytest.raises(ValueError):
+        scan_radius([np.zeros((60, 60), np.float32)])
+
+
+def test_dual_vote_takes_a_dark_radius_of_its_own():
+    """The diagnosed defect, in synthetic form. A dual-vote sequence has TWO
+    radii -- the bright solar limb and the larger dark lunar disc -- and the
+    dark vote must use its own. On m2-res_852p the cached radius fitted the
+    solar limb (86.9 px) while the dark disc measured 93.8: every dark vote
+    then landed on a CIRCLE of radius 6.9 px around the true centre instead
+    of on a peak, and the argmax alternated between two wrong modes 6 px
+    either side of truth (58 horizontal jumps of 24 source px).
+    """
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    # At the BRIGHT radius the dark vote is degenerate: the ring accumulator
+    # puts the argmax off the true centre.
+    (faux_x, _, faux_conf), _ = locate_center_regime(tot, 55.0, vote="dual")
+    # At the dark radius it lands, and with a far stronger peak.
+    (cx, cy, conf), regime = locate_center_regime(tot, 55.0, vote="dual",
+                                                  r_dark=63.0)
+    assert regime == "dark"
+    assert abs(cx - 100.0) < 1.5 and abs(cy - 100.0) < 1.5
+    assert conf > faux_conf
+    assert abs(faux_x - 100.0) > abs(cx - 100.0)
+
+
+def test_r_dark_none_keeps_the_single_radius_form():
+    """Byte-identity of the historic call: no r_dark means one radius."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    croissant = gris(make_frame(w=200, h=200, center=(100.0, 100.0),
+                                r=55.0, phase=0.9))
+    for g in (tot, croissant):
+        for vote in ("bright", "dark", "dual"):
+            assert (locate_center_regime(g, 55.0, vote=vote)
+                    == locate_center_regime(g, 55.0, vote=vote, r_dark=None))
+
+
+def test_a_dark_single_vote_honours_r_dark():
+    """vote="dark" is the regime the second radius scan runs under: it must
+    read r_dark too, not the bright radius it is given alongside."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    (cx, _, _), regime = locate_center_regime(tot, 55.0, vote="dark",
+                                              r_dark=63.0)
+    assert regime == "dark" and abs(cx - 100.0) < 1.5
+    assert locate_center_regime(tot, 55.0, vote="dark", r_dark=63.0) \
+        == locate_center_regime(tot, 63.0, vote="dark")
+
+
+def test_a_bright_vote_ignores_r_dark():
+    """The bright regime has nothing to do with the dark radius: passing one
+    must not move a bright measure, or non-dual profiles would shift."""
+    croissant = gris(make_frame(w=200, h=200, center=(100.0, 100.0),
+                                r=55.0, phase=0.5))
+    assert locate_center_regime(croissant, 55.0, vote="bright", r_dark=63.0) \
+        == locate_center_regime(croissant, 55.0, vote="bright")
+
+
+def test_locate_both_regimes_matches_the_single_regime_votes():
+    """Both candidates must be exactly what a single-regime call at the
+    same radius would produce: this is the function pipeline.analyze needs
+    to pick a winner itself (hysteresis) instead of the per-frame argmax
+    that locate_center_regime's own dual branch still does for its other
+    callers."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    bright, dark = locate_both_regimes(tot, 55.0, r_dark=63.0)
+    assert bright == locate_center_regime(tot, 55.0, vote="bright")[0]
+    assert dark == locate_center_regime(tot, 55.0, vote="dark", r_dark=63.0)[0]
+
+
+def test_locate_both_regimes_none_repeats_r():
+    """r_dark=None must repeat r, exactly like locate_center_regime."""
+    croissant = gris(make_frame(w=200, h=200, center=(100.0, 100.0),
+                                r=55.0, phase=0.5))
+    assert locate_both_regimes(croissant, 55.0) == \
+        locate_both_regimes(croissant, 55.0, r_dark=55.0)
+
+
+def test_locate_center_regime_dual_still_picks_the_stronger_peak():
+    """The refactor (locate_center_regime's dual branch now calls
+    locate_both_regimes) must not change its own, still-argmax, contract:
+    every other caller of vote="dual" is unaffected by this change."""
+    tot = gris(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                   r=63.0, corona=0.5))
+    bright, dark = locate_both_regimes(tot, 55.0, r_dark=63.0)
+    winner, regime = locate_center_regime(tot, 55.0, vote="dual", r_dark=63.0)
+    assert (winner, regime) == ((dark, "dark") if dark[2] > bright[2]
+                                else (bright, "bright"))

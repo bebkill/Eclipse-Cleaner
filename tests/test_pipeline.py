@@ -6,8 +6,10 @@ import pytest
 from eclipse.io import FrameWriter, FrameReader, probe
 from eclipse.pipeline import (SCHEMA_VERSION, analyze, render, charger_cache, main,
                               SEUIL_MASQUE_DEFAUT, TOLERANCE_BORD_DEFAUT,
+                              SWITCH_FRAMES, SWITCH_RATIO, RegimeChooser,
                               tailles_defaut)
-from tests.synth import make_frame
+from eclipse.presets import analysis_params
+from tests.synth import make_frame, make_moon_frame, make_totality_frame
 
 # Ancre sur la racine du depot, et non sur le repertoire courant : sinon le
 # test de fumee se sauterait silencieusement selon l'endroit d'ou pytest est
@@ -79,6 +81,77 @@ def test_seuil_masque_par_defaut_est_0_80():
     assert SEUIL_MASQUE_DEFAUT == 0.80
 
 
+def test_regime_chooser_starts_bright():
+    """The Sun is the subject whenever it is visible; the Moon only takes
+    the centre during totality (see RegimeChooser's docstring). A brand
+    new chooser must therefore answer "bright" even on its very first
+    call, whatever the confidences say -- the switch only fires after
+    SWITCH_FRAMES consecutive qualifying frames."""
+    chooser = RegimeChooser()
+    assert chooser.choose(0.05, 0.9) == "bright"
+
+
+def test_regime_chooser_ignores_isolated_flapping():
+    """The diagnosed defect in synthetic form: a partial eclipse where the
+    dark vote occasionally out-confidences the bright one for a frame or
+    two -- both are real locks, on two different bodies -- must NOT flip
+    the chosen regime, since the spikes never last SWITCH_FRAMES frames in
+    a row."""
+    chooser = RegimeChooser()
+    confs = [(0.42, 0.10), (0.38, 0.55), (0.40, 0.50), (0.44, 0.09),
+             (0.41, 0.60), (0.39, 0.52), (0.43, 0.08)]
+    regimes = [chooser.choose(b, d) for b, d in confs]
+    assert regimes == ["bright"] * len(confs)
+
+
+def test_regime_chooser_switches_bright_to_dark_after_switch_frames():
+    """A genuine transition (totality) must switch, but only once the
+    dark vote has been the stronger one, by SWITCH_RATIO, for
+    SWITCH_FRAMES consecutive frames -- not on the first qualifying frame,
+    which would be just as flap-prone as the old per-frame argmax."""
+    chooser = RegimeChooser()
+    for i in range(SWITCH_FRAMES - 1):
+        assert chooser.choose(0.05, 0.9) == "bright", f"switched early at {i}"
+    assert chooser.choose(0.05, 0.9) == "dark"
+
+
+def test_regime_chooser_switches_dark_to_bright_after_switch_frames():
+    """The reverse transition (end of totality), symmetrically delayed by
+    SWITCH_FRAMES."""
+    chooser = RegimeChooser()
+    for _ in range(SWITCH_FRAMES):
+        chooser.choose(0.05, 0.9)          # drive it to "dark" first
+    for i in range(SWITCH_FRAMES - 1):
+        assert chooser.choose(0.9, 0.05) == "dark", f"switched early at {i}"
+    assert chooser.choose(0.9, 0.05) == "bright"
+
+
+def test_regime_chooser_streak_resets_on_a_non_qualifying_frame():
+    """SWITCH_FRAMES must be CONSECUTIVE: one frame that breaks the streak
+    must restart the count, or a single stray strong frame amid noise
+    would still eventually flip the regime exactly like the old argmax."""
+    chooser = RegimeChooser()
+    for _ in range(SWITCH_FRAMES - 1):
+        chooser.choose(0.05, 0.9)          # almost switches...
+    assert chooser.choose(0.9, 0.05) == "bright"   # ...but the streak breaks
+    for i in range(SWITCH_FRAMES - 1):
+        assert chooser.choose(0.05, 0.9) == "bright", f"switched early at {i}"
+    assert chooser.choose(0.05, 0.9) == "dark"
+
+
+def test_regime_chooser_ties_favor_bright():
+    """Asymmetric by design: bright wins ties. From "dark", a run of equal
+    confidences must switch back to "bright" -- the Sun is the default
+    subject whenever the two votes disagree by nothing."""
+    chooser = RegimeChooser()
+    for _ in range(SWITCH_FRAMES):
+        chooser.choose(0.05, 0.9)          # drive it to "dark"
+    regime = None
+    for _ in range(SWITCH_FRAMES):
+        regime = chooser.choose(0.5, 0.5)
+    assert regime == "bright"
+
+
 def test_analyze_ecrit_un_cache_complet(video_synthetique, tmp_path):
     cache = str(tmp_path / "a.json")
     donnees = analyze(video_synthetique, cache, scale=1.0)
@@ -91,6 +164,131 @@ def test_analyze_ecrit_un_cache_complet(video_synthetique, tmp_path):
     for cle in ("cx", "cy", "conf", "disk_p90", "limb_sharpness",
                 "flare_ratio", "masse_captee", "level", "wb"):
         assert cle in relu["frames"][0]
+
+
+def test_cache_carries_the_preset(video_synthetique, tmp_path):
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    d = json.load(open(cache, encoding="utf-8"))
+    assert d["schema"] == 8 == SCHEMA_VERSION
+    assert d["preset"] == "custom"
+    assert d["analysis_params"] == analysis_params("custom")
+    assert all(f["regime"] in ("bright", "dark") for f in d["frames"])
+
+
+def test_render_refuses_a_cache_from_another_preset(video_synthetique, tmp_path):
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    with pytest.raises(ValueError, match="preset"):
+        render(video_synthetique, str(tmp_path / "out.mp4"), cache,
+               preset="moon")
+
+
+def test_analyze_moon_preset_scans_the_radius(tmp_path):
+    """A sequence of half-shadowed moons: area mode underestimates, the
+    moon preset must land on the true radius."""
+    chemin = str(tmp_path / "moon.mp4")
+    with FrameWriter(chemin, width=270, height=480, fps=30.0) as w:
+        for i in range(30):
+            w.write(make_moon_frame(w=270, h=480,
+                                    center=(135.0 + i * 0.2, 240.0),
+                                    r=97.0, umbra=0.5, umbra_level=0.15))
+    cache = str(tmp_path / "a.json")
+    analyze(chemin, cache, scale=1.0, preset="moon")
+    d = json.load(open(cache, encoding="utf-8"))
+    assert abs(d["radius"] - 97.0) < 3.0
+    assert d["preset"] == "moon"
+
+
+def test_run_refuses_to_reuse_a_cache_from_another_preset(video_synthetique,
+                                                          tmp_path, capsys):
+    """The run branch checks the preset BEFORE announcing the reuse.
+
+    The refusal itself proves nothing about WHERE the check lives: render()
+    raises the very same ValueError (both go through
+    pipeline._verifie_preset), so deleting the run-branch check would still
+    give exit code 1 and the same stderr. What distinguishes the early check
+    is the stdout: run must not print « Cache valide reutilise » for a cache
+    it is about to refuse. That absence is the real assertion here.
+    """
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    capsys.readouterr()                       # jette la sortie de l'analyse
+    code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
+                 "--cache", cache, "--taille", "60x100",
+                 "--preset", "moon", "--processus", "1"])
+    assert code == 1
+    capture = capsys.readouterr()
+    assert "preset" in capture.err and "--preset moon" in capture.err
+    assert "Cache valide reutilise" not in capture.out
+
+
+def test_run_refuses_to_reuse_a_cache_with_another_light_threshold(
+        video_synthetique, tmp_path, capsys):
+    """Name concordance is not enough: the resolved PARAMETERS must agree.
+
+    --seuil-lumiere is a pass-1 parameter (quality.masse_captee): a cache
+    measured at the preset's own cut says something else than one measured
+    at 0.90. Reusing it would sort and frame the sequence against measures
+    the flag claims to have changed -- silently, since the preset NAME
+    still matches. Same shape as the preset refusal: exit 1, the reason on
+    stderr, and no « Cache valide reutilise » on stdout.
+    """
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom")
+    capsys.readouterr()                       # jette la sortie de l'analyse
+    code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
+                 "--cache", cache, "--taille", "60x100",
+                 "--preset", "custom", "--seuil-lumiere", "0.9",
+                 "--processus", "1"])
+    assert code == 1
+    capture = capsys.readouterr()
+    assert "--seuil-lumiere 0.9" in capture.err
+    assert "Cache valide reutilise" not in capture.out
+
+
+def test_run_reuses_a_cache_whose_light_threshold_matches(video_synthetique,
+                                                          tmp_path, capsys):
+    """An EQUAL value is not a discordance: the cache still serves."""
+    cache = str(tmp_path / "a.json")
+    analyze(video_synthetique, cache, scale=1.0, preset="custom",
+            seuil_lumiere=0.5)
+    capsys.readouterr()
+    code = main(["run", video_synthetique, str(tmp_path / "o.mp4"),
+                 "--cache", cache, "--taille", "60x100",
+                 "--preset", "custom", "--seuil-lumiere", "0.5",
+                 "--processus", "1"])
+    assert code == 0
+    assert "Cache valide reutilise" in capsys.readouterr().out
+
+
+def test_cli_preset_flag_reaches_the_cache(video_synthetique, tmp_path, capsys):
+    cache = str(tmp_path / "a.json")
+    assert main(["analyze", video_synthetique, "--cache", cache,
+                 "--preset", "custom", "--processus", "1"]) == 0
+    assert json.load(open(cache, encoding="utf-8"))["preset"] == "custom"
+
+
+def test_analyze_without_preset_announces_the_detection(tmp_path, capsys):
+    """umbra_level 0.25, not 0.15: the synthetic umbra must be as dark as a
+    real one, no darker. Measured on the three real lunar videos (task 11),
+    the shadowed part of the disc sits at 10-40 % of the frame peak -- median
+    0.165 on Lunar-221924, 0.092 on Lunar-213307. An umbra_level of 0.15 puts
+    the synthetic gray at ~8.4 % of the peak, below anything measured, and
+    below detect.DIM_FRACTION: the umbra then never leaves the "dim" bucket
+    and the frame stops reading as a moon at all. Same value, for the same
+    reason, as the moon frame in test_detect.py.
+    """
+    chemin = str(tmp_path / "moon.mp4")
+    with FrameWriter(chemin, width=270, height=480, fps=30.0) as w:
+        for u in (0.2, 0.4, 0.6, 0.8) * 3:
+            w.write(make_moon_frame(w=270, h=480, center=(135.0, 240.0),
+                                    r=97.0, umbra=u, umbra_level=0.25))
+    cache = str(tmp_path / "a.json")
+    assert main(["analyze", chemin, "--cache", cache,
+                 "--processus", "1"]) == 0
+    assert "detecte : moon" in capsys.readouterr().out
+    assert json.load(open(cache, encoding="utf-8"))["preset"] == "moon"
 
 
 def test_charger_cache_rejette_un_schema_perime(video_synthetique, tmp_path):
@@ -1029,7 +1227,13 @@ def test_main_viewer_sans_source_passe_none(monkeypatch):
 def test_un_cache_d_avant_le_correctif_de_mesure_est_refuse(video_synthetique, tmp_path):
     """Les champs de mesure changent de VALEUR sans changer de nom ni de
     forme -- limb_sharpness au passage du percentile 90 au 98, puis cx quand
-    l'alignement a cesse de reprendre le x du pic concurrent.
+    l'alignement a cesse de reprendre le x du pic concurrent, puis toutes
+    les mesures quand le profil d'eclipse a choisi les strategies de la
+    passe 1 (schema 6), puis radius_dark et les mesures du regime sombre
+    quand le vote dual a cesse de voter les deux regimes au meme rayon
+    (schema 7), puis le choix de regime lui-meme quand l'argmax par frame a
+    cede la place a une hysteresis biaisee sur la sequence ordonnee
+    (schema 8, voir RegimeChooser).
 
     charger_cache ne valide que le schema et la signature de la SOURCE ;
     celle-ci n'ayant pas bouge, un cache d'avant le correctif serait relu en
@@ -1041,8 +1245,117 @@ def test_un_cache_d_avant_le_correctif_de_mesure_est_refuse(video_synthetique, t
     analyze(video_synthetique, cache, scale=1.0)
     with open(cache) as f:
         donnees = json.load(f)
-    assert donnees["schema"] == 5, "un cache neuf porte la version courante"
-    donnees["schema"] = 4                      # tel qu'ecrit avant le correctif
+    assert donnees["schema"] == 8, "un cache neuf porte la version courante"
+    donnees["schema"] = 7                      # tel qu'ecrit avant le correctif
     with open(cache, "w") as f:
         json.dump(donnees, f)
     assert charger_cache(cache, video_synthetique) is None
+
+
+def _video_totalite(tmp_path, nb_clair=60, nb_sombre=40, nom="tot.mp4"):
+    """Une eclipse totale de synthese : croissants a r=55, totalite a r=63.
+
+    Les deux rayons DIFFERENT, et c'est le point : le limbe solaire et le
+    disque lunaire qui le couvre ne sont pas le meme cercle (mesure sur
+    m2-res_852p : 87-88 px contre 93,8, soit 7,3 % d'ecart). La proportion
+    reprend celle de la video reelle, ou la totalite occupe la majeure
+    partie de la sequence : le balayage clair echantillonne les 300
+    premieres frames, le balayage sombre toute la video.
+    """
+    chemin = str(tmp_path / nom)
+    with FrameWriter(chemin, width=200, height=200, fps=30.0) as w:
+        for i in range(nb_clair):
+            phase = 0.6 * i / max(nb_clair - 1, 1)
+            w.write(make_frame(w=200, h=200, center=(100.0, 100.0), r=55.0,
+                               phase=phase, halo=0.1))
+        for i in range(nb_sombre):
+            w.write(make_totality_frame(w=200, h=200, center=(100.0, 100.0),
+                                        r=63.0, corona=0.5))
+    return chemin
+
+
+def test_dual_preset_scans_one_radius_per_regime(tmp_path):
+    """Le defaut diagnostique. Le preset sun votait les DEUX regimes au
+    rayon estime sur les 300 premieres frames — toutes en croissant clair —
+    donc au rayon du limbe SOLAIRE. Le vote sombre y devenait degenere
+    (accumulateur en anneau, voir locate.locate_center_regime) et le centre
+    mesure alternait entre deux modes faux de +/- 6 px.
+
+    Le cache doit desormais porter les deux rayons, et les frames sombres
+    doivent etre localisees sur le bon.
+    """
+    chemin = _video_totalite(tmp_path)
+    cache = str(tmp_path / "a.json")
+    d = analyze(chemin, cache, scale=1.0, preset="sun")
+    assert abs(d["radius"] - 55.0) < 2.0
+    assert abs(d["radius_dark"] - 63.0) < 2.0
+    relu = json.load(open(cache, encoding="utf-8"))
+    assert relu["radius_dark"] == d["radius_dark"]
+
+    sombres = [f for f in relu["frames"] if f["regime"] == "dark"]
+    assert len(sombres) >= 30, "la totalite doit etre reconnue comme sombre"
+    for f in sombres:
+        assert abs(f["cx"] - 100.0) < 1.5
+        assert abs(f["cy"] - 100.0) < 1.5
+
+
+def test_a_bright_only_video_falls_back_to_the_single_radius(tmp_path):
+    """Une eclipse PARTIELLE n'a pas de disque sombre : le second balayage
+    n'a rien a trouver et le rayon sombre ne doit pas partir a la derive."""
+    chemin = _video_totalite(tmp_path, nb_clair=60, nb_sombre=0,
+                             nom="partielle.mp4")
+    d = analyze(chemin, str(tmp_path / "b.json"), scale=1.0, preset="sun")
+    assert abs(d["radius_dark"] - d["radius"]) < 2.0
+
+
+def test_the_dark_scan_falling_over_keeps_the_bright_radius(tmp_path,
+                                                            monkeypatch):
+    """Le repli documente : quand scan_radius ne trouve aucun pic sombre
+    exploitable, il leve, et le rayon clair sert aux deux regimes."""
+    from eclipse import pipeline
+
+    chemin = _video_totalite(tmp_path, nb_clair=20, nb_sombre=10,
+                             nom="repli.mp4")
+    appels = []
+    reel = pipeline.scan_radius
+
+    def scan(grays, vote="bright", **kw):
+        appels.append(vote)
+        if vote == "dark":
+            raise ValueError("aucun pic de vote exploitable")
+        return reel(grays, vote=vote, **kw)
+
+    monkeypatch.setattr(pipeline, "scan_radius", scan)
+    d = analyze(chemin, str(tmp_path / "c.json"), scale=1.0, preset="sun")
+    assert "dark" in appels, "le second balayage doit avoir lieu"
+    assert d["radius_dark"] == d["radius"]
+
+
+def test_a_non_dual_preset_keeps_a_single_radius(tmp_path):
+    """Les profils non-dual ne changent pas : un seul rayon, et le champ
+    radius_dark le repete pour que le cache ait toujours la meme forme."""
+    chemin = _video_totalite(tmp_path, nb_clair=30, nb_sombre=0,
+                             nom="mono.mp4")
+    for preset in ("custom", "moon"):
+        d = analyze(chemin, str(tmp_path / f"{preset}.json"), scale=1.0,
+                    preset=preset)
+        assert d["radius_dark"] == d["radius"]
+
+
+def test_an_explicit_radius_wins_for_both_regimes(tmp_path):
+    """--radius est un ordre, pas une suggestion : sans radius_dark
+    explicite il vaut pour les deux regimes, et aucun balayage n'a lieu."""
+    chemin = _video_totalite(tmp_path, nb_clair=20, nb_sombre=10,
+                             nom="explicite.mp4")
+    d = analyze(chemin, str(tmp_path / "d.json"), scale=1.0, preset="sun",
+                radius=44.0)
+    assert d["radius"] == 44.0 and d["radius_dark"] == 44.0
+
+
+def test_an_explicit_dark_radius_is_honoured_alone(tmp_path):
+    """radius_dark seul : le rayon clair est balaye, le sombre est impose."""
+    chemin = _video_totalite(tmp_path, nb_clair=20, nb_sombre=10,
+                             nom="explicite2.mp4")
+    d = analyze(chemin, str(tmp_path / "e.json"), scale=1.0, preset="sun",
+                radius_dark=70.0)
+    assert d["radius_dark"] == 70.0 and d["radius"] != 70.0

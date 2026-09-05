@@ -23,7 +23,7 @@ import numpy as np
 from . import langues
 from .decisions import DECISIONS_DEFAUT_NOM, applique, charger, diagnostique
 from .io import FrameReader, FrameWriter, PngSequenceWriter, probe
-from .locate import estimate_radius
+from .locate import estimate_radius, scan_radius
 from .parallele import applique as applique_travaux
 from .parallele import (PROCESSUS_DEFAUT, mesure_frame, nombre_processus,
                         rend_frame)
@@ -62,8 +62,58 @@ from .viewer import sert
 # le schema et la signature de la SOURCE, laquelle n'a pas bouge. Sans cette
 # incrementation, le viewer aurait annonce « analyse deja faite » et le
 # correctif serait reste inerte, sans qu'aucun signal ne le dise.
-SCHEMA_VERSION = 5
+#
+# Version 6: the cache carries the eclipse profile ("preset",
+# "analysis_params") and each frame its winning vote regime ("regime").
+# cx/cy/conf/masse_captee/disk_p90 all change VALUE under non-custom
+# profiles, and even custom caches gain fields: same trap as versions
+# 3-5, a v5 cache re-read silently would leave every profile inert.
+#
+# Version 7: the cache carries a root "radius_dark", and the dual-vote
+# profiles scan it separately -- the bright vote fits the SOLAR limb, the
+# dark vote the larger LUNAR disc covering it (see
+# locate.locate_center_regime for the measured degeneracy). Every dark
+# frame of a dual cache therefore changes cx/cy/conf, and disk_p90 /
+# limb_sharpness / flare_ratio / masse_captee with them, since they are
+# all sized on the located disc. Same trap as versions 3-6: the field
+# names and shapes do not move, charger_cache validates only the schema
+# and the SOURCE signature, so a v6 cache re-read silently would keep the
+# 24-source-px horizontal shake that this version removes. Non-dual
+# caches merely gain the field, radius_dark repeating radius.
+#
+# Version 8: the dual-vote regime choice is no longer a per-frame argmax
+# but a bright-biased HYSTERESIS over the ordered sequence of confidences
+# (see RegimeChooser) -- the per-frame argmax was flapping between two
+# DIFFERENT bodies that both legitimately lock during a partial eclipse
+# (bright on the solar crescent, dark on the covering lunar disc,
+# physically offset centres), measured on m2-res_852p as dozens of
+# 10-24 px jumps and two 166-168 px jumps among the first 14 kept frames.
+# cx/cy/conf/regime and the fields sized on them (disk_p90,
+# limb_sharpness, flare_ratio, masse_captee) all change VALUE on a dual
+# cache wherever the old argmax and the new hysteresis disagree -- same
+# trap as versions 3-7: charger_cache validates only the schema and the
+# SOURCE signature, so a v7 cache re-read silently would keep the
+# start-of-video jumping this version removes. Frames also gain
+# "conf_autre", the confidence of the regime NOT chosen (null outside
+# dual profiles) -- kept for future diagnostics, not read by render or the
+# viewer today.
+SCHEMA_VERSION = 8
 FRAMES_ECHANTILLON_RAYON = 300
+
+#: Frames sampled for the DARK-regime radius scan of a dual-vote profile,
+#: spread over the WHOLE video and not over the first
+#: FRAMES_ECHANTILLON_RAYON. That window is exactly what made the defect
+#: invisible: on m2-res_852p totality starts at frame 264, so the 12
+#: samples of frames 0-275 were all bright crescents and the scan could
+#: only ever return the solar radius. The count matches the bright scan's
+#: (300 / 25 = 12 frames): scan_radius costs ~30 votes per frame, so a
+#: dozen is a fixed cost of a few hundred votes per analysis, never per
+#: sequence frame. Frames whose dark peak is weak are dropped by
+#: scan_radius's own confidence filter, which is what lets the sample
+#: span the bright phase too without pulling the median (verified on
+#: synthetic mixtures: 4 bright + 4 dark frames still return the dark
+#: radius to within 0.02 px of the dark-only scan).
+DARK_RADIUS_SAMPLE_COUNT = 12
 
 # Fraction de la source couverte par la fenetre de recadrage par defaut.
 # Calibree sur la sequence de reference (1080x1920) : la tache 11 avait choisi
@@ -257,9 +307,190 @@ def charger_cache(cache_path, source):
     return donnees
 
 
+def _verifie_preset(cache_path, source, donnees, preset, seuil_lumiere=None):
+    """Raise unless the cache was analyzed under the expected profile.
+
+    The pass-1 measures DEPEND on the profile (vote regime, lit mask,
+    light threshold): serving a cache from another one would sort and
+    frame the sequence against measures that mean something else.
+    Deliberately NOT folded into charger_cache, whose contract is schema +
+    source only — the viewer relies on that (see
+    viewer._reglages_reanalyse).
+
+    preset None means "whatever the cache carries", the default at render.
+
+    seuil_lumiere: the light cut EXPLICITLY requested on the command line,
+    if any. The profile name alone is not enough — --seuil-lumiere
+    overrides the profile's own cut, so two caches carrying the same name
+    can hold different measures. A non-None value that disagrees with the
+    cache's analysis_params is refused for exactly the same reason as a
+    preset mismatch; an equal one is simply satisfied, in silence. None
+    means "whatever the cache carries" (render and the viewer never
+    remeasure, so they never pass one).
+
+    Single-sourced here because both callers — render() and the `run`
+    cache-reuse branch — must tell the user the exact same thing. run()
+    checks BEFORE announcing the reuse, so that a refusal is not preceded
+    by a message claiming the cache is being reused.
+    """
+    if preset is not None and donnees.get("preset") != preset:
+        raise ValueError(
+            f"Le cache {cache_path} a ete analyse avec le preset "
+            f"{donnees.get('preset')!r}, pas {preset!r}. Relancer : "
+            f"python -m eclipse analyze {source} --preset {preset}")
+    if seuil_lumiere is not None:
+        cache_seuil = (donnees.get("analysis_params") or {}).get(
+            "light_threshold")
+        if cache_seuil != float(seuil_lumiere):
+            raise ValueError(
+                f"Le cache {cache_path} a ete analyse avec un seuil de "
+                f"lumiere de {cache_seuil}, pas {float(seuil_lumiere)}. "
+                f"Relancer : python -m eclipse analyze {source} "
+                f"--seuil-lumiere {seuil_lumiere:g}")
+
+
+#: Confidence ratio a bright-locked sequence's dark vote must clear, and
+#: the number of CONSECUTIVE frames it must clear it for, before
+#: RegimeChooser accepts a switch away from "bright" (and, symmetrically,
+#: the number of consecutive bright-stronger frames before switching back).
+#:
+#: Calibrated on m2-res_852p (--preset sun): the per-frame argmax that
+#: RegimeChooser replaces switched 25 times over the whole video (all in
+#: the partial phases), because BOTH regimes lock legitimately on TWO
+#: DIFFERENT bodies -- bright on the solar crescent, dark on the covering
+#: lunar disc, physically offset centres (see locate.locate_center_regime).
+#: SWITCH_RATIO=2.0, SWITCH_FRAMES=5 collapse that to a clean
+#: bright/dark/bright sequence -- measured blocks 0-300 / 301-1193 /
+#: 1194-1283 -- with a total of 2 switches, comfortably under the ≤4 gate:
+#: those are the only two places the dark vote is EVER 2x the bright one,
+#: or vice versa, for 5 frames running. The switch lands 15-20 frames after
+#: the approximate visual contact points (~284, ~1189): the crescent still
+#: carries a non-trivial bright confidence for a few tenths of a second
+#: past geometric contact, which is exactly the kind of single-frame noise
+#: this hysteresis is built to outlast rather than react to.
+#:
+#: Swept on this video's real confidence sequence: every SWITCH_RATIO in
+#: 1.5-3.0 gives the same 2 switches at SWITCH_FRAMES=5 or 8, block
+#: boundaries moving by at most 3 frames (298-303) across that whole
+#: range -- the choice is not sensitive to the exact ratio. SWITCH_FRAMES
+#: is what matters: at 3 frames, ratios 1.5 and 2.0 both regress to 6
+#: switches (two brief false starts near each contact), so 5 is the
+#: smallest value that stays robust across the ratio range, not merely
+#: the suggested starting point.
+SWITCH_RATIO = 2.0
+SWITCH_FRAMES = 5
+
+
+class RegimeChooser:
+    """Stateful, bright-biased hysteresis over an ORDERED sequence of dual
+    vote confidences -- see pipeline.analyze's collection loop, the only
+    caller: it receives parallele.mesure_frame's results IN ORDER (the
+    enumerate over `mesures`), which is what makes a STATEFUL choice
+    possible at all.
+
+    The physics this encodes: the Sun is the subject whenever it is
+    visible -- a thin crescent is still the Sun -- and the Moon only takes
+    the centre during totality, when the Sun is entirely hidden. A
+    per-frame independent argmax over (conf_bright, conf_dark) does not
+    know this: during the partial phases BOTH regimes can lock, legitimately,
+    on two DIFFERENT bodies (bright on the solar crescent, dark on the
+    covering lunar disc, physically offset centres -- see
+    locate.locate_center_regime for the measured degeneracy that first
+    exposed this), and the argmax flips between them frame to frame.
+
+    The rule: start "bright". Switch bright -> dark only once conf_dark has
+    exceeded SWITCH_RATIO * conf_bright for SWITCH_FRAMES CONSECUTIVE
+    frames; switch dark -> bright once conf_bright has been at least
+    conf_dark (bright wins ties, asymmetric with the other direction) for
+    SWITCH_FRAMES consecutive frames. A single anomalous frame, however
+    strong, cannot flip the choice -- it must hold for the entire streak.
+
+    A pending switch (streak running but not yet SWITCH_FRAMES long) is
+    NOT retroactive: frames already returned while the streak was building
+    keep the OLD regime. This is deliberate, not an oversight -- rewriting
+    already-cached frames would need a second pass, and a lag of at most
+    SWITCH_FRAMES frames at a genuine transition (a fraction of a second of
+    video) is invisible next to the flapping it replaces.
+    """
+
+    def __init__(self, switch_ratio=SWITCH_RATIO, switch_frames=SWITCH_FRAMES):
+        self._ratio = switch_ratio
+        self._frames = switch_frames
+        self._regime = "bright"
+        self._streak = 0
+
+    def choose(self, conf_bright, conf_dark):
+        """Regime ("bright" or "dark") for this frame; advances the state.
+
+        Must be called exactly once per frame, in video order: the streak
+        it maintains has no meaning otherwise.
+        """
+        if self._regime == "bright":
+            qualifies = conf_dark > self._ratio * conf_bright
+        else:
+            qualifies = conf_bright >= conf_dark   # bright wins ties
+        if qualifies:
+            self._streak += 1
+            if self._streak >= self._frames:
+                self._regime = "dark" if self._regime == "bright" else "bright"
+                self._streak = 0
+        else:
+            self._streak = 0
+        return self._regime
+
+
+def _dark_regime_radius(source, lw, lh, info, bright_radius):
+    """Radius of the DARK disc, scanned over the whole video.
+
+    A dual-vote profile measures two distinct circles and therefore needs
+    two radii; see locate.locate_center_regime for the measured
+    degeneracy when the dark vote borrows the bright radius, and
+    DARK_RADIUS_SAMPLE_COUNT for the sampling.
+
+    A second decode pass at analysis resolution is accepted: it only
+    costs the frames up to the last useful sample, and the loop stops as
+    soon as it has them. That is the price of the only sampling window
+    that can SEE totality.
+
+    Fallback: scan_radius raises when no frame yields an exploitable dark
+    peak -- a partial eclipse has no dark disc at all. The bright radius
+    then stands for both regimes, which restores exactly the previous
+    behavior on those sequences.
+    """
+    total = max(1, int(info["duration"] * info["fps"]))
+    pas = max(1, total // DARK_RADIUS_SAMPLE_COUNT)
+    echantillon = []
+    with FrameReader(source, width=lw, height=lh) as reader:
+        for i, f in enumerate(reader):
+            if i % pas == 0:
+                echantillon.append(f.astype(np.float32).mean(axis=2))
+                if len(echantillon) >= DARK_RADIUS_SAMPLE_COUNT:
+                    break
+    try:
+        return scan_radius(echantillon, vote="dark")
+    except ValueError:
+        return bright_radius
+
+
 def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
-            progression=None):
+            progression=None, preset="custom", seuil_lumiere=None,
+            radius_dark=None):
     """Passe 1 : mesure chaque frame et ecrit le cache.
+
+    preset : nom de profil d'eclipse (voir presets.PRESET_NAMES). Il choisit
+    les STRATEGIES de la passe 1 — masque eclaire, estimation du rayon,
+    regime de vote, seuil de lumiere — et est consigne dans le cache : les
+    mesures en dependent, un cache d'un autre profil ne peut donc pas servir
+    (voir render).
+    seuil_lumiere : remplace le seuil de lumiere du profil (voir
+    quality.masse_captee).
+
+    radius / radius_dark: EXPLICIT radii in full resolution, for the bright
+    regime and for the dark regime. radius alone stands for BOTH regimes --
+    an explicit user order wins entirely, no scan takes place. radius_dark
+    alone still lets the bright radius be scanned. No CLI flag for
+    radius_dark: the surface stays minimal, and --radius is enough to
+    reclaim control of both.
 
     processus : nombre de travailleurs pour le calcul par frame ; par defaut
     1, soit le chemin sequentiel. Le defaut de la BIBLIOTHEQUE est deliberement
@@ -273,6 +504,11 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     de frames n'est connu qu'a la fin de la boucle. Ce rappel est aussi le
     point d'annulation du moteur de taches — ce qu'il leve remonte.
     """
+    from .presets import analysis_params
+    params = analysis_params(preset)
+    if seuil_lumiere is not None:
+        params = dict(params, light_threshold=float(seuil_lumiere))
+
     # Valide avant de decoder quoi que ce soit : sinon --processus 0 ne
     # echouerait qu'apres l'estimation du rayon, 300 frames plus tard.
     nb = nombre_processus(processus)
@@ -288,35 +524,78 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     if radius is None:
         with FrameReader(source, width=lw, height=lh) as reader:
             grays = (f.astype(np.float32).mean(axis=2) for f in reader)
-            r = estimate_radius(islice(grays, FRAMES_ECHANTILLON_RAYON))
+            echantillon = islice(grays, FRAMES_ECHANTILLON_RAYON)
+            if params["radius_mode"] == "scan":
+                # A dozen frames spread over the sample window: the scan
+                # costs ~30 votes per frame, never per sequence frame.
+                sampled = list(islice(echantillon, 0, None, 25))
+                r = scan_radius(sampled, vote=params["vote"])
+            else:
+                r = estimate_radius(echantillon,
+                                    lit_mode=params["lit_mode"])
     else:
         # Meme rapport exact que dans render(), et non 1/scale : les
         # dimensions d'analyse sont arrondies au pixel pair.
         r = float(radius) * (lw / info["width"])
 
+    # LE RAYON DU REGIME SOMBRE. Second balayage seulement pour un profil a
+    # vote dual, et seulement faute de consigne explicite : partout ailleurs
+    # il repete le rayon clair, ce qui laisse les profils non-dual
+    # bit-identiques (echantillonnage des 300 premieres frames inchange).
+    if radius_dark is not None:
+        dark_radius = float(radius_dark) * (lw / info["width"])
+    elif radius is not None:
+        dark_radius = r                   # l'ordre de l'utilisateur l'emporte
+    elif params["vote"] == "dual":
+        dark_radius = _dark_regime_radius(source, lw, lh, info, r)
+    else:
+        dark_radius = r
+
     frames = []
+    # STATEFUL, and built once for the whole analysis: the hysteresis it
+    # runs needs the ORDERED sequence of confidences, frame after frame
+    # (see RegimeChooser). It is a no-op for non-dual profiles below --
+    # mesure_frame never returns "candidates" for them, so .choose() is
+    # simply never called.
+    choisisseur = RegimeChooser()
     # closing() libere le pool des que le with est quitte, y compris par une
     # exception : sans lui, une trace retenue garde vivante la frame d'analyze,
     # donc le generateur et son pool avec elle.
     with FrameReader(source, width=lw, height=lh) as reader, \
          closing(applique_travaux(
-             mesure_frame, ((rgb, r) for rgb in reader), nb)) as mesures:
+             mesure_frame, ((rgb, r, dark_radius, params) for rgb in reader),
+             nb)) as mesures:
         # Le parent decode et distribue ; les travailleurs calculent. Les
         # resultats reviennent dans l'ordre des frames, ce qui rend le cache
-        # identique a celui du chemin sequentiel.
+        # identique a celui du chemin sequentiel -- et c'est aussi ce qui
+        # rend la hysteresis du choix de regime possible : elle ne connait
+        # que l'ordre video.
         for n, mes in enumerate(mesures):
-            q, p = mes["q"], mes["p"]
+            candidats = mes.get("candidates")
+            if candidats is not None:
+                cb, cd = candidats["bright"]["conf"], candidats["dark"]["conf"]
+                regime = choisisseur.choose(cb, cd)
+                choisi = candidats[regime]
+                conf_autre = candidats["dark" if regime == "bright"
+                                       else "bright"]["conf"]
+            else:
+                choisi, regime, conf_autre = mes, mes["regime"], None
+            q, p = choisi["q"], choisi["p"]
             frames.append({
                 "n": n,
-                "cx": None if not np.isfinite(mes["cx"]) else float(mes["cx"]),
-                "cy": None if not np.isfinite(mes["cy"]) else float(mes["cy"]),
-                "conf": float(mes["conf"]),
+                "cx": (None if not np.isfinite(choisi["cx"])
+                      else float(choisi["cx"])),
+                "cy": (None if not np.isfinite(choisi["cy"])
+                      else float(choisi["cy"])),
+                "conf": float(choisi["conf"]),
+                "regime": regime,
                 "disk_p90": _ou_none(q["disk_p90"]),
                 "limb_sharpness": _ou_none(q["limb_sharpness"]),
                 "flare_ratio": _ou_none(q["flare_ratio"]),
-                "masse_captee": _ou_none(mes["m"]),
+                "masse_captee": _ou_none(choisi["m"]),
                 "level": _ou_none(p["level"]),
                 "wb": [_ou_none(v) for v in p["wb"]],
+                "conf_autre": _ou_none(conf_autre),
             })
             if progression is not None:
                 progression(n + 1)
@@ -324,9 +603,13 @@ def analyze(source, cache_path, scale=0.5, radius=None, processus=1,
     if not frames:
         raise ValueError(f"Aucune frame decodee depuis {source}")
     print(f"{len(frames)} frames, rayon apparent estime a {r:.1f} px")
+    if dark_radius != r:
+        print(f"Rayon du disque sombre (totalite) : {dark_radius:.1f} px")
 
     donnees = {"schema": SCHEMA_VERSION, "source": _signature_source(source),
-               "scale": scale, "radius": r, "width": lw, "height": lh,
+               "preset": preset, "analysis_params": params,
+               "scale": scale, "radius": r, "radius_dark": dark_radius,
+               "width": lw, "height": lh,
                "fps": info["fps"], "frames": frames}
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(donnees, f)
@@ -347,7 +630,7 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
           taille_sortie=None, interp_max=INTERP_MAX_DEFAUT,
           tolerance_bord=None, frames_dir=None,
           interp_deplacement_max=INTERP_DEPLACEMENT_MAX_DEFAUT,
-          seuil_masque=None,
+          seuil_masque=None, preset=None,
           decisions_path=None, sans_decisions=False,
           depassement_butee=None,
           couleur=None, couleur_fenetre=None, couleur_amplitude=None,
@@ -381,6 +664,9 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
     seuil_masque : fraction minimale de lumiere que le masque solaire doit
     capturer pour qu'une mesure de centre entre dans la trajectoire (voir
     quality.masse_captee) ; par defaut SEUIL_MASQUE_DEFAUT.
+    preset : si fourni, le profil d'eclipse attendu ; le cache est refuse
+    s'il a ete analyse sous un autre. Par defaut None, soit le profil du
+    cache, quel qu'il soit.
     decisions_path : fichier de decisions manuelles (voir decisions.py) a
     superposer aux verdicts automatiques ; par defaut
     decisions.DECISIONS_DEFAUT_NOM s'il existe. Incompatible avec
@@ -414,6 +700,7 @@ def render(source, sortie, cache_path, seuils=None, taille=None,
             f"Cache d'analyse absent ou perime : {cache_path}. "
             f"Lancer d'abord : python -m eclipse analyze {source}"
         )
+    _verifie_preset(cache_path, source, donnees, preset)
 
     frames = donnees["frames"]
     n = len(frames)
@@ -641,12 +928,15 @@ def main(argv=None):
                    help="Rayon apparent en pixels pleine resolution, "
                         "si l'estimation automatique echoue")
     _ajoute_processus(a)
+    _ajoute_preset(a)
+    _ajoute_seuil_lumiere(a)
 
     r = sous.add_parser("render", help="Passe 2 : trier, stabiliser, encoder")
     r.add_argument("source")
     r.add_argument("sortie")
     r.add_argument("--cache", default="analysis.json")
     _ajoute_processus(r)
+    _ajoute_preset(r)
     _ajoute_seuils(r)
     _ajoute_cadrage(r)
 
@@ -660,6 +950,8 @@ def main(argv=None):
     x.add_argument("--scale", type=float, default=None)
     x.add_argument("--radius", type=float, default=None)
     _ajoute_processus(x)
+    _ajoute_preset(x)
+    _ajoute_seuil_lumiere(x)
     _ajoute_seuils(x)
     _ajoute_cadrage(x)
 
@@ -676,6 +968,7 @@ def main(argv=None):
     # viewer contre les seuils par defaut, silencieusement (finding 1).
     # _ajoute_cadrage fournit deja --decisions ; --sans-decisions n'a pas de
     # sens ici et est refuse plus bas.
+    _ajoute_preset(v)
     _ajoute_seuils(v)
     _ajoute_cadrage(v)
 
@@ -687,14 +980,23 @@ def main(argv=None):
 
     try:
         if args.commande == "analyze":
+            preset = args.preset
+            if preset is None:
+                from .detect import classify_video
+                suggestion = classify_video(args.source)
+                preset = suggestion["type"] or "custom"
+                print(f"Type d'eclipse detecte : {preset} "
+                      f"(forcer avec --preset)")
             analyze(args.source, args.cache, args.scale, args.radius,
-                    processus=args.processus)
+                    processus=args.processus,
+                    preset=preset,
+                    seuil_lumiere=args.seuil_lumiere)
         elif args.commande == "render":
             render(args.source, args.sortie, args.cache, seuils or None,
                   taille=args.taille, taille_sortie=args.sortie_taille,
                   interp_max=args.interp_max, tolerance_bord=args.tolerance_bord,
                     interp_deplacement_max=args.interp_deplacement_max,
-                  seuil_masque=args.seuil_masque,
+                  seuil_masque=args.seuil_masque, preset=args.preset,
                   decisions_path=args.decisions_path,
                   sans_decisions=args.sans_decisions,
                   depassement_butee=args.depassement_butee,
@@ -721,7 +1023,8 @@ def main(argv=None):
                 raise ValueError(
                     "--frames-dir n'est pas accepte par le viewer. "
                     "Le rendu lance depuis la page exporte la sequence PNG "
-                    "dans <source>-frames, a cote de la video source. "
+                    "dans <source>-eclipse/frames, le dossier de travail "
+                    "cree a cote de la video source. "
                     "Pour choisir un autre dossier, utiliser la commande "
                     "render."
                 )
@@ -739,13 +1042,32 @@ def main(argv=None):
                 depassement_butee=args.depassement_butee,
                 couleur=not args.sans_couleur,
                 couleur_fenetre=args.couleur_fenetre,
-                couleur_amplitude=args.couleur_amplitude)
+                couleur_amplitude=args.couleur_amplitude,
+                preset=args.preset)
         else:
-            if charger_cache(args.cache, args.source) is None:
+            donnees_cache = charger_cache(args.cache, args.source)
+            if donnees_cache is None:
+                preset = args.preset
+                if preset is None:
+                    from .detect import classify_video
+                    suggestion = classify_video(args.source)
+                    preset = suggestion["type"] or "custom"
+                    print(f"Type d'eclipse detecte : {preset} "
+                          f"(forcer avec --preset)")
                 analyze(args.source, args.cache,
                         args.scale if args.scale is not None else 0.5,
-                        args.radius, processus=args.processus)
+                        args.radius, processus=args.processus,
+                        preset=preset,
+                        seuil_lumiere=args.seuil_lumiere)
             else:
+                # Meme controle que render, et le MEME message (voir
+                # _verifie_preset), mais fait ICI : annoncer la reutilisation
+                # d'un cache qu'on s'apprete a refuser se contredirait.
+                # args.seuil_lumiere too: given but discordant, it must not
+                # pass in silence — the cache would be reused with measures
+                # the flag claims to have changed (see _verifie_preset).
+                _verifie_preset(args.cache, args.source, donnees_cache,
+                                args.preset, args.seuil_lumiere)
                 print(f"Cache valide reutilise : {args.cache}")
                 if args.scale is not None or args.radius is not None:
                     print(
@@ -757,7 +1079,7 @@ def main(argv=None):
                   taille=args.taille, taille_sortie=args.sortie_taille,
                   interp_max=args.interp_max, tolerance_bord=args.tolerance_bord,
                     interp_deplacement_max=args.interp_deplacement_max,
-                  seuil_masque=args.seuil_masque,
+                  seuil_masque=args.seuil_masque, preset=args.preset,
                   decisions_path=args.decisions_path,
                   sans_decisions=args.sans_decisions,
                   depassement_butee=args.depassement_butee,
@@ -790,6 +1112,29 @@ def _ajoute_processus(parseur):
         help="Nombre de travailleurs pour le calcul par frame "
              "(defaut : un de moins que les coeurs logiques ; "
              "1 = chemin sequentiel)")
+
+
+def _ajoute_preset(parseur):
+    from .presets import PRESET_NAMES
+    parseur.add_argument(
+        "--preset", choices=PRESET_NAMES, default=None,
+        help="Profil d'eclipse : strategies d'analyse et seuils de tri "
+             "(defaut : detection automatique a l'analyse, preset du "
+             "cache au rendu)")
+
+
+def _ajoute_seuil_lumiere(parseur):
+    """--seuil-lumiere, pour analyze et run seulement.
+
+    C'est un parametre de PASSE 1 : il entre dans les mesures du cache
+    (quality.masse_captee), donc il n'a rien a faire sur render ni sur le
+    viewer, qui relisent ce cache sans remesurer.
+    """
+    parseur.add_argument("--seuil-lumiere", dest="seuil_lumiere", type=float,
+                         default=None,
+                         help="Fraction du maximum au-dela de laquelle un pixel "
+                              "compte comme lumiere pour la masse captee "
+                              "(defaut : celui du preset)")
 
 
 def _ajoute_seuils(parseur):

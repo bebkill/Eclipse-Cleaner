@@ -107,3 +107,172 @@ def test_une_masse_captee_absente_invalide_la_mesure():
     d["frames"][20]["cx"] = 400.0
     r = analyse_verdicts(d, 1080, 1920)
     assert abs(r["traj_x"][20] - 540.0) < 1.0
+
+
+def test_no_valid_measure_degrades_instead_of_raising():
+    """When no frame passes the mask threshold, the analysis must not
+    crash the caller (this is the reported viewer bug): fallback
+    trajectory at the frame center, every frame marked no_lock."""
+    d = _cache(n=30)
+    for f in d["frames"]:
+        f["masse_captee"] = 0.40          # all below the 0.80 default
+    r = analyse_verdicts(d, 1080, 1920)
+    assert r["mesures_valides"] == 0
+    assert all(v == "no_lock" for v in r["verdicts"])
+    assert np.allclose(r["traj_x"], 1080 / 2.0)   # source coordinates
+    assert np.allclose(r["traj_y"], 1920 / 2.0)
+    assert len(r["traj_x"]) == 30
+
+
+def test_sort_defaults_follow_the_cache_preset():
+    """A dim but steady moon sequence: dark_abs 40 (custom default) would
+    reject everything, the moon preset's dark_abs must keep it."""
+    d = _cache(n=40, p90=12.0)
+    d["preset"] = "moon"
+    r = analyse_verdicts(d, 1080, 1920)
+    assert all(v is None for v in r["verdicts"])
+    d["preset"] = "custom"
+    r = analyse_verdicts(d, 1080, 1920)
+    assert all(v == "too_dark" for v in r["verdicts"])
+
+
+def test_explicit_seuils_override_the_preset_defaults():
+    d = _cache(n=40, p90=12.0)
+    d["preset"] = "moon"
+    r = analyse_verdicts(d, 1080, 1920, seuils={"dark_abs": 40.0})
+    assert all(v == "too_dark" for v in r["verdicts"])
+
+
+def test_valid_measure_count_is_reported():
+    d = _cache(n=30)
+    d["frames"][5]["masse_captee"] = 0.10
+    r = analyse_verdicts(d, 1080, 1920)
+    assert r["mesures_valides"] == 29
+
+
+def test_hors_source_uses_the_radius_of_each_frame_s_regime():
+    """Le disque visible n'a pas la meme taille dans les deux regimes.
+
+    Un cache dual porte deux rayons ; la borne hors_source est calculee sur
+    le DISQUE, donc sur celui que la frame a reellement montre. Ici le
+    rayon sombre est deux fois le clair : le meme centre tient dans la
+    source en regime clair et deborde en regime sombre.
+    """
+    # kx = 2 : la borne vaut rayon*2 + 3 (MARGE_HALO) - 5 (tolerance), soit
+    # 198 px au rayon clair et 398 px au rayon sombre. Un centre a 300 px
+    # tient dans la premiere et pas dans la seconde.
+    d = _cache(n=60, cx=150.0)              # 300 px en pleine resolution
+    d["radius_dark"] = 200.0                # 400 px, contre 200 pour le clair
+    for f in d["frames"]:
+        f["regime"] = "bright"
+    for i in range(20, 40):
+        d["frames"][i]["regime"] = "dark"
+    r = analyse_verdicts(d, 1080, 1920)
+    assert r["verdicts"][10] is None            # clair : 300 >= 198
+    assert r["verdicts"][30] == "hors_source"   # sombre : 300 < 398
+
+
+def test_a_cache_without_radius_dark_keeps_the_single_bound():
+    """Compatibilite de forme : sans radius_dark ni colonne de regime, la
+    borne est celle d'avant, a l'octet."""
+    d = _cache(n=40)
+    avec = _cache(n=40)
+    avec["radius_dark"] = avec["radius"]
+    for f in avec["frames"]:
+        f["regime"] = "dark"
+    assert (analyse_verdicts(d, 1080, 1920)["verdicts"]
+            == analyse_verdicts(avec, 1080, 1920)["verdicts"])
+
+
+def test_a_missing_regime_counts_as_bright():
+    """Une frame sans regime ne doit pas faire tomber l'analyse ni heriter
+    du rayon sombre par defaut."""
+    d = _cache(n=40, cx=210.0)
+    d["radius_dark"] = 200.0
+    for f in d["frames"]:
+        f["regime"] = None
+    assert all(v is None for v in analyse_verdicts(d, 1080, 1920)["verdicts"])
+
+
+def test_analyse_verdicts_passes_the_regime_to_classify():
+    """classify()'s sharpness reference must be split per regime (see
+    quality.classify), and analyse_verdicts is what supplies it that
+    column: without it, a normal bright frame caught in a regime flutter
+    near a long, much sharper dark regime reads as blurry -- exactly the
+    defect measured on m2-res_852p between frames 250 and 309."""
+    n = 1000
+    d = _cache(n=n)
+    for f in d["frames"]:
+        f["limb_sharpness"] = 100.0
+        f["regime"] = "bright"
+    for depart in range(260, 320, 12):
+        for i in range(depart, depart + 6):
+            d["frames"][i]["limb_sharpness"] = 1000.0
+            d["frames"][i]["regime"] = "dark"
+    for i in range(320, n):
+        d["frames"][i]["limb_sharpness"] = 1000.0
+        d["frames"][i]["regime"] = "dark"
+
+    verdicts = analyse_verdicts(d, 1080, 1920)["verdicts"]
+    zone = [i for i in range(260, 320) if d["frames"][i]["regime"] == "bright"]
+    assert all(verdicts[i] is None for i in zone)
+
+
+def test_an_unlocked_vote_does_not_anchor_under_the_sun_preset():
+    """The sun preset's exposure-catastrophe transitions (measured on
+    m2-res_852p, frames 270-279) leave some frames with a fully-captured
+    mask (masse_captee 1.0) but a vote that never locked (conf 0.0040-
+    0.0076, against >= 0.042 for the good frames around them): the center
+    they report is garbage and must not anchor the trajectory."""
+    d = _cache(n=41)
+    d["preset"] = "sun"
+    d["frames"][20]["conf"] = 0.005
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 540.0) < 1.0       # interpolated from neighbors
+
+
+def test_a_dark_regime_row_anchors_below_the_sun_preset_floor():
+    """The sun preset's conf_ancre (0.04) is calibrated on the BRIGHT vote's
+    confidence scale (see presets.sort_defaults). The dark accumulator does
+    not share that scale: on m2-res_852p, third-contact frames 1174-1179
+    measure correctly (0.0-0.2 px error) at conf 0.030-0.035, below 0.04 but
+    with nothing wrong with them. The floor must not apply to a dark-regime
+    row -- it is gated on masse_captee instead (see verdicts.analyse_verdicts's
+    mesure_ok)."""
+    d = _cache(n=41)
+    d["preset"] = "sun"
+    d["frames"][20]["regime"] = "dark"
+    d["frames"][20]["masse_captee"] = 1.0
+    d["frames"][20]["conf"] = 0.03            # below conf_ancre (0.04)
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 800.0) < 1.0       # anchors on itself
+
+
+def test_a_bright_regime_row_still_does_not_anchor_under_the_sun_preset():
+    """Mirrors the dark-regime case above: a bright-regime row at the same
+    conf 0.03 must still be discarded and interpolated, exactly as before
+    this change -- the floor keeps gating the vote it was calibrated on."""
+    d = _cache(n=41)
+    d["preset"] = "sun"
+    d["frames"][20]["regime"] = "bright"
+    d["frames"][20]["masse_captee"] = 1.0
+    d["frames"][20]["conf"] = 0.03            # below conf_ancre (0.04)
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 540.0) < 1.0       # interpolated from neighbors
+
+
+def test_the_same_low_confidence_row_still_anchors_under_custom():
+    """conf_ancre defaults to 0.0 everywhere but sun (see
+    quality.SEUILS_DEFAUT): M2 found 44 correctly-positioned frames on the
+    reference custom video (and 163 on Lunar-221924) sitting under 0.02
+    despite being legitimate measures, so a universal floor is wrong and
+    the same low-confidence row must keep anchoring on itself here."""
+    d = _cache(n=41)
+    d["preset"] = "custom"
+    d["frames"][20]["conf"] = 0.005
+    d["frames"][20]["cx"] = 400.0
+    r = analyse_verdicts(d, 1080, 1920)
+    assert abs(r["traj_x"][20] - 800.0) < 1.0       # still anchors on itself
