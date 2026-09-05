@@ -25,6 +25,12 @@ J'ai essayé de corriger avec les outils disponibles (SIRIL et PIPP), mais je n'
 
 *Les deux extraits sont accélérés 6×.*
 
+| Séquence originale d'éclipse lunaire | Nettoyée avec Eclipse Cleaner (`--preset moon`) |
+| :---: | :---: |
+| ![Vidéo originale d'éclipse lunaire, tracking perdu à la fin](docs/assets/before-moon.gif) | ![Vidéo nettoyée d'éclipse lunaire, valide jusqu'à la dernière image](docs/assets/after-moon.gif) |
+
+*Les deux extraits sont accélérés 6×. Séquence d'éclipse lunaire aimablement partagée par un utilisateur Seestar — merci !*
+
 ## Ce que fait le programme
 
 - **S'adapte à ce qui s'éclipse réellement** — le Soleil, la Lune ou une planète échouent chacun différemment, donc un preset de type d'éclipse choisit la bonne stratégie de mesure et les bons seuils de tri par défaut pour chacun. Le type est détecté automatiquement et toujours modifiable. Voir [Types d'éclipse et presets](#types-déclipse-et-presets).

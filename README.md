@@ -25,6 +25,12 @@ I tried to fix it with the tools available (SIRIL and PIPP), but I probably didn
 
 *Both clips play at 6× speed.*
 
+| Original lunar eclipse footage | Cleaned with Eclipse Cleaner (`--preset moon`) |
+| :---: | :---: |
+| ![Original lunar-eclipse video, tracking lost at the end](docs/assets/before-moon.gif) | ![Cleaned lunar-eclipse video, valid through the last frame](docs/assets/after-moon.gif) |
+
+*Both clips play at 6× speed. Lunar eclipse footage kindly shared by a Seestar user — thank you!*
+
 ## What it does
 
 - **Adapts to what's actually eclipsing** — sun, moon, or a planetary transit each fail differently, so an eclipse-type preset picks the right measurement strategy and sorting defaults for each. The type is detected automatically and always overridable. See [Eclipse types and presets](#eclipse-types-and-presets).
