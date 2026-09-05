@@ -759,12 +759,21 @@
      Stepping to a frame where the window sits inside the source gives every
      handle back; the size is global, so it can be set from any frame.
      touch-action: none, without which the browser reads the gesture as a
-     scroll and sends no pointermove at all. */
+     scroll and sends no pointermove at all.
+     THE SAME OVERSHOOT clips the dimension badge too, in two ways neither
+     .cadrage-mesure-dedans nor centering can cure: when the rect's top
+     overshoots the thumbnail's own top edge by more than ~6px (the flipped
+     position's own offset), the flipped badge is itself carried past that
+     edge and clipped in turn; and, being horizontally centered, it clips
+     sideways the same way when a narrow rect sits close enough to the
+     thumbnail's left or right edge. Both are accepted as inherent to the
+     overshoot geometry, exactly like the handle above -- step to a frame
+     where the window sits inside the source to read it. */
   .poignee-recadrage {
     position: absolute; width: 9px; height: 9px;
     background: #00e5ff; border: 1.5px solid #000; border-radius: 2px;
     box-sizing: border-box; pointer-events: auto; touch-action: none;
-    z-index: 2;
+    z-index: 3;
   }
   .poignee-recadrage.nw { top: -4.5px; left: -4.5px; cursor: nwse-resize; }
   .poignee-recadrage.se { bottom: -4.5px; right: -4.5px; cursor: nwse-resize; }
@@ -791,7 +800,7 @@
     font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
     font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 999px;
     border: 1px solid rgba(0, 229, 255, 0.5); white-space: nowrap;
-    pointer-events: none; z-index: 3;
+    pointer-events: none; z-index: 2;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
   }
   #cadrage-mesure.cadrage-mesure-dedans { top: 6px; }
